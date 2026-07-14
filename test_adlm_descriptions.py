@@ -101,6 +101,62 @@ def detect_shots(video_path, threshold=DEFAULT_SCENE_THRESHOLD):
     return shots
 
 
+MIN_SHOT_DURATION = 0.5
+MAX_SHOT_DURATION = 15.0
+
+
+def normalize_shots(shots):
+    """Merge shots <0.5s into previous, split shots >15s. Re-assigns IDs."""
+    # Merge short shots
+    merged = []
+    for shot in shots:
+        dur = shot["end"] - shot["start"]
+        if dur < MIN_SHOT_DURATION and merged:
+            merged[-1]["end"] = shot["end"]
+        elif dur < MIN_SHOT_DURATION and not merged:
+            merged.append(shot)  # will merge into next
+        else:
+            if merged and (merged[-1]["end"] - merged[-1]["start"]) < MIN_SHOT_DURATION:
+                merged[-1]["end"] = shot["end"]
+                merged[-1]["start"] = min(merged[-1]["start"], shot["start"])
+            else:
+                merged.append(shot)
+
+    # Split long shots
+    split = []
+    for shot in merged:
+        dur = shot["end"] - shot["start"]
+        if dur <= MAX_SHOT_DURATION + MIN_SHOT_DURATION:
+            split.append(shot)
+        else:
+            t = shot["start"]
+            while t < shot["end"]:
+                remaining = shot["end"] - t
+                if remaining <= MAX_SHOT_DURATION + MIN_SHOT_DURATION:
+                    split.append({"start": round(t, 3), "end": shot["end"]})
+                    break
+                else:
+                    split.append({"start": round(t, 3), "end": round(t + MAX_SHOT_DURATION, 3)})
+                    t += MAX_SHOT_DURATION
+
+    for i, s in enumerate(split):
+        s["id"] = i + 1
+    return split
+
+
+def extract_window_audio(video_path, start_sec, end_sec, output_path):
+    """Extract audio for a time window as MP3. Returns path or None."""
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-ss", f"{start_sec:.3f}", "-to", f"{end_sec:.3f}",
+        "-i", video_path,
+        "-vn", "-q:a", "0", output_path
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        return output_path
+    return None
+
+
 def extract_frames(video_path, start_sec, end_sec, fps, output_dir, prefix):
     """Extract frames from video at given FPS, scaled to 480p height. Returns list of (path, absolute_time)."""
     pattern = os.path.join(output_dir, f"{prefix}_%04d.jpg")
@@ -256,8 +312,12 @@ def main():
 
     # Detect real shot boundaries
     print(f"Detecting shots in {VIDEO_PATH} (threshold={args.threshold})...")
-    all_shots = detect_shots(VIDEO_PATH, threshold=args.threshold)
-    print(f"Found {len(all_shots)} shots\n")
+    raw_shots = detect_shots(VIDEO_PATH, threshold=args.threshold)
+    print(f"Found {len(raw_shots)} raw shots")
+
+    # Normalize: merge <0.5s, split >15s
+    all_shots = normalize_shots(raw_shots)
+    print(f"After normalization: {len(all_shots)} shots\n")
 
     for s in all_shots:
         dur = s["end"] - s["start"]
@@ -305,8 +365,34 @@ def main():
         for old in glob.glob(os.path.join(frames_dir, "*.jpg")):
             os.remove(old)
 
-        # Extract and burn frames for each shot in the window
+        # Extract window audio and build shot layout label
+        audio_path = os.path.join(OUTPUT_DIR, f"window_audio_shot{shot_id}.mp3")
+        audio_file = extract_window_audio(VIDEO_PATH, window_start_sec, window_end_sec, audio_path)
+
         parts = []
+
+        if audio_file:
+            # Shot layout label for audio context
+            layout_lines = ["[AUDIO — continuous for full context window]"]
+            for i in range(ctx_start, ctx_end + 1):
+                curr = shots[i]
+                s_start = format_mmss(curr["start"] - time_offset)
+                s_end = format_mmss(curr["end"] - time_offset)
+                if i == idx:
+                    layout_lines.append(f"  Target shot: {s_start} - {s_end}")
+                elif i < idx:
+                    layout_lines.append(f"  Shot t-{idx-i}: {s_start} - {s_end}")
+                else:
+                    layout_lines.append(f"  Shot t+{i-idx}: {s_start} - {s_end}")
+            parts.append(types.Part(text="\n".join(layout_lines)))
+
+            with open(audio_file, "rb") as af:
+                parts.append(types.Part(
+                    inline_data=types.Blob(data=af.read(), mime_type="audio/mp3")
+                ))
+            print(f"  Audio: {os.path.getsize(audio_file) / 1024:.0f} KB")
+        else:
+            print("  Audio: extraction failed, proceeding without audio")
         frame_counts = {}
         total_frames = 0
         for i in range(ctx_start, ctx_end + 1):
