@@ -1,75 +1,49 @@
 """
-Test script: Generate ADLM dense descriptions for video shots using
-timestamped frame extraction with normalized timelines.
+ADLM dense description pipeline — timestamped visual events with character tracking.
 
-Shot detection uses ffmpeg scene change detection (not pre-chunked files).
-
-- Context shots (t-2, t-1, t+1, t+2) at 1 FPS
-- Target shot at 3 FPS
-- All timestamps normalized so t-2 shot start = 00:00.0
-- Dialogues time-shifted to match
-- Timestamps burnt on frames as MM:SS.m (white text, black border, top-right)
-
-Produces:
-  adlm_descriptions.json — per-shot events with character tracking
-  adlm_timeline.json     — merged chronological timeline (absolute times restored)
-
-Usage:
-    cd /home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline
-    python3 /tmp/adlm_dense_descriptions/test_adlm_descriptions.py
-    python3 /tmp/adlm_dense_descriptions/test_adlm_descriptions.py --num-shots 5
-    python3 /tmp/adlm_dense_descriptions/test_adlm_descriptions.py --threshold 0.2
+Configuration via config.yaml (OmegaConf) with CLI overrides:
+    python3 test_adlm_descriptions.py
+    python3 test_adlm_descriptions.py pipeline.num_shots=5
+    python3 test_adlm_descriptions.py model.provider=local model.name=google/gemma-4-E2B-it
+    python3 test_adlm_descriptions.py model.name=gemma-4-26b-a4b-it model.temperature=0.3
 """
 
 import os
 import sys
 import json
 import glob
-import argparse
 import subprocess
-import datetime
 import re
 
 sys.path.insert(0, "/home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline")
 sys.path.insert(0, "/tmp/adlm_dense_descriptions")
 
+from omegaconf import OmegaConf
 from PIL import Image, ImageDraw, ImageFont
-from google import genai
-from google.genai import types
 from prompts_adlm import ADLM_SYSTEM_PROMPT, ADLM_CHUNK_PROMPT, ADLM_DESCRIPTION_SCHEMA
+from model_client import create_client
 
-# --- Config ---
-VIDEO_PATH = "output/rotary_3min/rotary_3min.mp4"
-DIALOGUE_SRT = "output/rotary_3min/rotary_3min.srt"
-OUTPUT_DIR = "/tmp/adlm_dense_descriptions/output"
-MODEL = "gemini-3.1-pro-preview"
-
-CONTEXT_FPS = 1
-TARGET_FPS = 3
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-DEFAULT_SCENE_THRESHOLD = 0.12
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def load_config():
+    file_cfg = OmegaConf.load(os.path.join(os.path.dirname(__file__), "config.yaml"))
+    cli_cfg = OmegaConf.from_cli()
+    return OmegaConf.merge(file_cfg, cli_cfg)
 
 
 def format_mmss(seconds):
-    """Format seconds as MM:SS.m (1 decimal place)."""
     minutes = int(seconds) // 60
     secs = seconds - minutes * 60
     return f"{minutes:02d}:{secs:04.1f}"
 
 
 def mmss_to_seconds(mmss_str):
-    """Parse MM:SS.m back to seconds."""
     parts = mmss_str.split(":")
-    minutes = int(parts[0])
-    secs = float(parts[1])
-    return minutes * 60 + secs
+    return int(parts[0]) * 60 + float(parts[1])
 
 
-def detect_shots(video_path, threshold=DEFAULT_SCENE_THRESHOLD):
-    """Run ffmpeg scene detection and return list of shot boundaries as
-    [{"id": 1, "start": 0.0, "end": 4.629}, ...]"""
+def detect_shots(video_path, threshold=0.12):
     result = subprocess.run([
         "ffmpeg", "-i", video_path,
         "-vf", f"select='gt(scene,{threshold})',showinfo",
@@ -97,18 +71,16 @@ def detect_shots(video_path, threshold=DEFAULT_SCENE_THRESHOLD):
             "start": round(change_points[i], 3),
             "end": round(change_points[i + 1], 3)
         })
-
     return shots
 
 
-def extract_frames(video_path, start_sec, end_sec, fps, output_dir, prefix):
-    """Extract frames from video at given FPS, scaled to 480p height. Returns list of (path, absolute_time)."""
+def extract_frames(video_path, start_sec, end_sec, fps, output_dir, prefix, frame_height=480):
     pattern = os.path.join(output_dir, f"{prefix}_%04d.jpg")
     subprocess.run([
         "ffmpeg", "-y",
         "-ss", f"{start_sec:.3f}", "-to", f"{end_sec:.3f}",
         "-i", video_path,
-        "-vf", f"fps={fps},scale=-2:480",
+        "-vf", f"fps={fps},scale=-2:{frame_height}",
         "-q:v", "2", pattern
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -125,7 +97,6 @@ def extract_frames(video_path, start_sec, end_sec, fps, output_dir, prefix):
 
 
 def burn_timestamp(frame_path, timestamp_str, output_path):
-    """Burn MM:SS.m timestamp on top-right of frame (white text, black border)."""
     img = Image.open(frame_path)
     draw = ImageDraw.Draw(img)
     font_size = max(20, img.height // 20)
@@ -149,7 +120,6 @@ def burn_timestamp(frame_path, timestamp_str, output_path):
 
 
 def get_shifted_subtitles(srt_path, window_start, window_end, target_start, target_end, time_offset):
-    """Get subtitles in window with timestamps shifted by -time_offset, formatted as MM:SS.m."""
     import srt as srt_lib
     if not os.path.exists(srt_path):
         return "No dialogue track available."
@@ -176,17 +146,12 @@ def get_shifted_subtitles(srt_path, window_start, window_end, target_start, targ
 
 
 def events_to_summary(events):
-    """Compact summary of events for history context."""
     if not events:
         return ""
-    parts = []
-    for e in events:
-        parts.append(f"[{e['timestamp']}] {e['description']}")
-    return " | ".join(parts)
+    return " | ".join(f"[{e['timestamp']}] {e['description']}" for e in events)
 
 
-def build_merged_timeline(results, character_registry):
-    """Merge all per-shot events into a single chronological timeline with absolute timestamps."""
+def build_merged_timeline(results, character_registry, cfg):
     timeline = []
     shot_boundaries = []
 
@@ -210,8 +175,9 @@ def build_merged_timeline(results, character_registry):
     timeline.sort(key=lambda e: mmss_to_seconds(e["timestamp_abs"]))
 
     return {
-        "video": VIDEO_PATH,
-        "model": MODEL,
+        "video": cfg.video.path,
+        "model": cfg.model.name,
+        "provider": cfg.model.provider,
         "total_shots": len(results),
         "total_events": len(timeline),
         "character_registry": character_registry,
@@ -221,18 +187,24 @@ def build_merged_timeline(results, character_registry):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--num-shots", type=int, default=0,
-                        help="Number of shots to process (0 = all)")
-    parser.add_argument("--threshold", type=float, default=DEFAULT_SCENE_THRESHOLD,
-                        help="Scene change detection threshold (0.0-1.0)")
-    args = parser.parse_args()
+    cfg = load_config()
 
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    video_path = cfg.video.path
+    dialogue_srt = cfg.video.dialogue_srt
+    output_dir = cfg.output.dir
+    context_fps = cfg.pipeline.context_fps
+    target_fps = cfg.pipeline.target_fps
+    threshold = cfg.pipeline.scene_threshold
+    num_shots = cfg.pipeline.num_shots
+    frame_height = cfg.pipeline.frame_height
 
-    # Detect real shot boundaries
-    print(f"Detecting shots in {VIDEO_PATH} (threshold={args.threshold})...")
-    all_shots = detect_shots(VIDEO_PATH, threshold=args.threshold)
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Provider: {cfg.model.provider} | Model: {cfg.model.name}")
+    client = create_client(cfg)
+
+    print(f"Detecting shots in {video_path} (threshold={threshold})...")
+    all_shots = detect_shots(video_path, threshold=threshold)
     print(f"Found {len(all_shots)} shots\n")
 
     for s in all_shots:
@@ -240,12 +212,11 @@ def main():
         print(f"  Shot {s['id']:3d}: [{format_mmss(s['start'])} - {format_mmss(s['end'])}] ({dur:.1f}s)")
     print()
 
-    shots = all_shots[:args.num_shots] if args.num_shots > 0 else all_shots
+    shots = all_shots[:num_shots] if num_shots > 0 else all_shots
     print(f"Processing {len(shots)} shots")
-    print(f"Model: {MODEL}")
-    print(f"Context shots: {CONTEXT_FPS} FPS | Target shot: {TARGET_FPS} FPS\n")
+    print(f"Context: {context_fps} FPS | Target: {target_fps} FPS\n")
 
-    frames_dir = os.path.join(OUTPUT_DIR, "frames")
+    frames_dir = os.path.join(output_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
 
     character_registry = []
@@ -257,11 +228,9 @@ def main():
         start_sec = shot["start"]
         end_sec = shot["end"]
 
-        # Context window: 2 shots before, 2 after
         ctx_start = max(0, idx - 2)
         ctx_end = min(len(shots) - 1, idx + 2)
 
-        # Time offset: start of first context shot becomes 0
         window_start_sec = shots[ctx_start]["start"]
         window_end_sec = shots[ctx_end]["end"]
         time_offset = window_start_sec
@@ -273,11 +242,9 @@ def main():
               f"| normalized [{norm_target_start} - {norm_target_end}] "
               f"| {end_sec - start_sec:.1f}s ---")
 
-        # Clean up previous frames
         for old in glob.glob(os.path.join(frames_dir, "*.jpg")):
             os.remove(old)
 
-        # Extract and burn frames for each shot in the window
         parts = []
         frame_counts = {}
         total_frames = 0
@@ -286,21 +253,21 @@ def main():
             c_start = curr["start"]
             c_end = curr["end"]
             is_target = (i == idx)
-            fps = TARGET_FPS if is_target else CONTEXT_FPS
+            fps = target_fps if is_target else context_fps
 
             if is_target:
-                label = f"[TARGET SHOT | {TARGET_FPS} FPS]"
+                label = f"[TARGET SHOT | {target_fps} FPS]"
             elif i < idx:
                 summary = events_to_summary(curr.get("adlm_events", []))
                 desc_text = f"\nEvents: {summary}" if summary else ""
-                label = f"[CONTEXT SHOT BEFORE (t-{idx-i}) | {CONTEXT_FPS} FPS]{desc_text}"
+                label = f"[CONTEXT SHOT BEFORE (t-{idx-i}) | {context_fps} FPS]{desc_text}"
             else:
-                label = f"[CONTEXT SHOT AFTER (t+{i-idx}) | {CONTEXT_FPS} FPS]"
+                label = f"[CONTEXT SHOT AFTER (t+{i-idx}) | {context_fps} FPS]"
 
-            parts.append(types.Part(text=label))
+            parts.append({"type": "text", "text": label})
 
             prefix = f"shot_{curr['id']:03d}"
-            raw_frames = extract_frames(VIDEO_PATH, c_start, c_end, fps, frames_dir, prefix)
+            raw_frames = extract_frames(video_path, c_start, c_end, fps, frames_dir, prefix, frame_height)
 
             role = "TARGET" if is_target else f"t-{idx-i}" if i < idx else f"t+{i-idx}"
             frame_counts[curr["id"]] = (len(raw_frames), fps, role)
@@ -311,24 +278,17 @@ def main():
                 ts_str = format_mmss(norm_time)
                 burnt_path = frame_path.replace(".jpg", "_ts.jpg")
                 burn_timestamp(frame_path, ts_str, burnt_path)
+                parts.append({"type": "image", "path": burnt_path})
 
-                with open(burnt_path, "rb") as f:
-                    parts.append(types.Part(
-                        inline_data=types.Blob(data=f.read(), mime_type="image/jpeg")
-                    ))
-
-        # Log frame counts
         print(f"  Frames: {total_frames} total")
         for sid, (nf, fp, role) in frame_counts.items():
             print(f"    Shot {sid:3d} ({role:>6s}, {fp} FPS): {nf} frames")
 
-        # Dialogue with shifted timestamps
         subs_text = get_shifted_subtitles(
-            DIALOGUE_SRT, window_start_sec, window_end_sec,
+            dialogue_srt, window_start_sec, window_end_sec,
             start_sec, end_sec, time_offset
         )
 
-        # Recent history (last 4 shots)
         history_lines = description_history[-4:]
         recent_history = "\n".join(history_lines) if history_lines else "None (first shot)"
 
@@ -344,20 +304,15 @@ def main():
             recent_history=recent_history,
             character_registry=reg_text
         )
-        parts.append(types.Part(text=prompt_text))
+        parts.append({"type": "text", "text": prompt_text})
 
         try:
-            resp = client.models.generate_content(
-                model=MODEL,
-                contents=types.Content(parts=parts),
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                    response_schema=ADLM_DESCRIPTION_SCHEMA,
-                    system_instruction=ADLM_SYSTEM_PROMPT
-                )
+            resp = client.generate(
+                system_prompt=ADLM_SYSTEM_PROMPT,
+                parts=parts,
+                schema=ADLM_DESCRIPTION_SCHEMA
             )
-            resp_data = json.loads(resp.text)
+            resp_data = resp["data"]
             events = resp_data.get("events", [])
             new_chars = resp_data.get("new_characters", [])
 
@@ -374,9 +329,9 @@ def main():
             print(f"  Events: {len(events)}")
             for e in events:
                 print(f"    [{e['timestamp']}] {e['description'][:100]}")
-            print(f"  Tokens: prompt={resp.usage_metadata.prompt_token_count}, "
-                  f"output={resp.usage_metadata.candidates_token_count}, "
-                  f"thinking={resp.usage_metadata.thoughts_token_count}")
+            print(f"  Tokens: prompt={resp['prompt_tokens']}, "
+                  f"output={resp['output_tokens']}, "
+                  f"thinking={resp['thinking_tokens']}")
             print()
 
             results.append({
@@ -403,23 +358,22 @@ def main():
                 "new_characters": []
             })
 
-    # Save per-shot results
-    output_file = os.path.join(OUTPUT_DIR, "adlm_descriptions.json")
+    output_file = os.path.join(output_dir, "adlm_descriptions.json")
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump({
-            "video": VIDEO_PATH,
-            "model": MODEL,
-            "scene_threshold": args.threshold,
+            "video": video_path,
+            "model": cfg.model.name,
+            "provider": cfg.model.provider,
+            "scene_threshold": threshold,
             "num_shots": len(shots),
-            "context_fps": CONTEXT_FPS,
-            "target_fps": TARGET_FPS,
+            "context_fps": context_fps,
+            "target_fps": target_fps,
             "character_registry": character_registry,
             "shots": results
         }, f, indent=2, ensure_ascii=False)
 
-    # Build and save merged timeline
-    merged = build_merged_timeline(results, character_registry)
-    timeline_file = os.path.join(OUTPUT_DIR, "adlm_timeline.json")
+    merged = build_merged_timeline(results, character_registry, cfg)
+    timeline_file = os.path.join(output_dir, "adlm_timeline.json")
     with open(timeline_file, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2, ensure_ascii=False)
 
