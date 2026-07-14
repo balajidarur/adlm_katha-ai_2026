@@ -7,11 +7,11 @@ Shot detection uses ffmpeg scene change detection (not pre-chunked files).
 - Context shots (t-2, t-1, t+1, t+2) at 1 FPS
 - Target shot at 3 FPS
 - All timestamps normalized so t-2 shot start = 00:00.0
-- Dialogues time-shifted to match
+- Dialogues assigned to shots via midpoint rule, diarized in target shot
 - Timestamps burnt on frames as MM:SS.m (white text, black border, top-right)
 
 Produces:
-  adlm_descriptions.json — per-shot events with character tracking
+  adlm_descriptions.json — per-shot events, diarized dialogues, character tracking
   adlm_timeline.json     — merged chronological timeline (absolute times restored)
 
 Usage:
@@ -148,31 +148,39 @@ def burn_timestamp(frame_path, timestamp_str, output_path):
     img.save(output_path)
 
 
-def get_shifted_subtitles(srt_path, window_start, window_end, target_start, target_end, time_offset):
-    """Get subtitles in window with timestamps shifted by -time_offset, formatted as MM:SS.m."""
+def load_subtitles(srt_path):
+    """Load and parse SRT file into list of (start_sec, end_sec, text)."""
     import srt as srt_lib
     if not os.path.exists(srt_path):
-        return "No dialogue track available."
+        return []
     with open(srt_path, 'r', encoding='utf-8') as f:
         subs = list(srt_lib.parse(f.read()))
-    result = []
-    for sub in subs:
-        s_start = sub.start.total_seconds()
-        s_end = sub.end.total_seconds()
-        if s_start <= window_end and s_end >= window_start:
-            shifted_start = s_start - time_offset
-            shifted_end = s_end - time_offset
-            if s_end <= target_start:
-                label = "[BEFORE TARGET]"
-            elif s_start >= target_end:
-                label = "[AFTER TARGET]"
-            else:
-                label = "[DURING TARGET]"
-            content_clean = sub.content.replace('\n', ' ')
-            result.append(
-                f"{label} [{format_mmss(shifted_start)} - {format_mmss(shifted_end)}]: {content_clean}"
-            )
-    return "\n".join(result) if result else "No dialogue in this window."
+    return [(sub.start.total_seconds(), sub.end.total_seconds(), sub.content.replace('\n', ' ')) for sub in subs]
+
+
+def assign_dialogues_to_shots(all_subs, shots):
+    """Assign each dialogue to the shot that contains its midpoint."""
+    shot_dialogues = {s["id"]: [] for s in shots}
+    for s_start, s_end, text in all_subs:
+        midpoint = (s_start + s_end) / 2.0
+        for shot in shots:
+            if shot["start"] <= midpoint < shot["end"]:
+                shot_dialogues[shot["id"]].append((s_start, s_end, text))
+                break
+    return shot_dialogues
+
+
+def get_dialogue_texts(dialogues, time_offset, label_prefix=""):
+    """Format dialogue list as text with shifted timestamps."""
+    if not dialogues:
+        return "None"
+    lines = []
+    for s_start, s_end, text in dialogues:
+        shifted_start = format_mmss(s_start - time_offset)
+        shifted_end = format_mmss(s_end - time_offset)
+        prefix = f"{label_prefix} " if label_prefix else ""
+        lines.append(f"{prefix}[{shifted_start} - {shifted_end}]: {text}")
+    return "\n".join(lines)
 
 
 def events_to_summary(events):
@@ -186,8 +194,9 @@ def events_to_summary(events):
 
 
 def build_merged_timeline(results, character_registry):
-    """Merge all per-shot events into a single chronological timeline with absolute timestamps."""
+    """Merge all per-shot events and dialogues into a single chronological timeline."""
     timeline = []
+    all_dialogues = []
     shot_boundaries = []
 
     for shot in results:
@@ -206,17 +215,32 @@ def build_merged_timeline(results, character_registry):
                 "type": "event",
                 "description": event["description"]
             })
+        for dlg in shot.get("dialogues", []):
+            abs_start = mmss_to_seconds(dlg["timestamp_start"]) + time_offset
+            abs_end = mmss_to_seconds(dlg["timestamp_end"]) + time_offset
+            all_dialogues.append({
+                "timestamp_start_abs": format_mmss(abs_start),
+                "timestamp_end_abs": format_mmss(abs_end),
+                "shot_id": shot["shot_id"],
+                "text": dlg["text"],
+                "speaker_id": dlg["speaker_id"],
+                "speaker_name": dlg["speaker_name"],
+                "confidence": dlg["confidence"]
+            })
 
     timeline.sort(key=lambda e: mmss_to_seconds(e["timestamp_abs"]))
+    all_dialogues.sort(key=lambda d: mmss_to_seconds(d["timestamp_start_abs"]))
 
     return {
         "video": VIDEO_PATH,
         "model": MODEL,
         "total_shots": len(results),
         "total_events": len(timeline),
+        "total_dialogues": len(all_dialogues),
         "character_registry": character_registry,
         "shot_boundaries": shot_boundaries,
-        "timeline": timeline
+        "timeline": timeline,
+        "dialogues": all_dialogues
     }
 
 
@@ -247,6 +271,10 @@ def main():
 
     frames_dir = os.path.join(OUTPUT_DIR, "frames")
     os.makedirs(frames_dir, exist_ok=True)
+
+    # Load subtitles and assign to shots via midpoint rule
+    all_subs = load_subtitles(DIALOGUE_SRT)
+    shot_dialogues = assign_dialogues_to_shots(all_subs, all_shots)
 
     character_registry = []
     results = []
@@ -322,11 +350,18 @@ def main():
         for sid, (nf, fp, role) in frame_counts.items():
             print(f"    Shot {sid:3d} ({role:>6s}, {fp} FPS): {nf} frames")
 
-        # Dialogue with shifted timestamps
-        subs_text = get_shifted_subtitles(
-            DIALOGUE_SRT, window_start_sec, window_end_sec,
-            start_sec, end_sec, time_offset
-        )
+        # Dialogues: target shot dialogues (to diarize) vs context (for reference)
+        target_dialogues = shot_dialogues.get(shot_id, [])
+        context_dialogues = []
+        for i in range(ctx_start, ctx_end + 1):
+            if i != idx:
+                context_dialogues.extend(shot_dialogues.get(shots[i]["id"], []))
+        context_dialogues.sort(key=lambda x: x[0])
+
+        target_subs_text = get_dialogue_texts(target_dialogues, time_offset)
+        context_subs_text = get_dialogue_texts(context_dialogues, time_offset)
+
+        print(f"  Dialogues: {len(target_dialogues)} to diarize, {len(context_dialogues)} context")
 
         # Recent history (last 4 shots)
         history_lines = description_history[-4:]
@@ -340,7 +375,8 @@ def main():
         prompt_text = ADLM_CHUNK_PROMPT.format(
             start_timecode=norm_target_start,
             end_timecode=norm_target_end,
-            subs_text=subs_text,
+            target_subs_text=target_subs_text,
+            context_subs_text=context_subs_text,
             recent_history=recent_history,
             character_registry=reg_text
         )
@@ -359,6 +395,7 @@ def main():
             )
             resp_data = json.loads(resp.text)
             events = resp_data.get("events", [])
+            dialogues = resp_data.get("dialogues", [])
             new_chars = resp_data.get("new_characters", [])
 
             for nc in new_chars:
@@ -374,6 +411,12 @@ def main():
             print(f"  Events: {len(events)}")
             for e in events:
                 print(f"    [{e['timestamp']}] {e['description'][:100]}")
+            if dialogues:
+                print(f"  Diarized dialogues: {len(dialogues)}")
+                for d in dialogues:
+                    conf = d.get('confidence', '?')
+                    print(f"    [{d['timestamp_start']}-{d['timestamp_end']}] "
+                          f"{d['speaker_name']} [{d['speaker_id']}] ({conf}): {d['text'][:80]}")
             print(f"  Tokens: prompt={resp.usage_metadata.prompt_token_count}, "
                   f"output={resp.usage_metadata.candidates_token_count}, "
                   f"thinking={resp.usage_metadata.thoughts_token_count}")
@@ -387,6 +430,7 @@ def main():
                 "end_timecode": norm_target_end,
                 "time_offset": time_offset,
                 "events": events,
+                "dialogues": dialogues,
                 "new_characters": new_chars
             })
 
@@ -400,6 +444,7 @@ def main():
                 "end_timecode": norm_target_end,
                 "time_offset": time_offset,
                 "events": [],
+                "dialogues": [],
                 "new_characters": []
             })
 
@@ -428,6 +473,7 @@ def main():
     print(f"Merged timeline:  {timeline_file}")
     print(f"Total shots: {len(results)}")
     print(f"Total events: {merged['total_events']}")
+    print(f"Total dialogues diarized: {merged['total_dialogues']}")
     print(f"Characters found: {len(character_registry)}")
     for c in character_registry:
         print(f"  - {c['name']} ({c['id']}): {c.get('appearance', 'N/A')}")
