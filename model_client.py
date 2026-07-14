@@ -87,7 +87,7 @@ class LocalClient:
         self.processor = AutoProcessor.from_pretrained(model_name)
         self.model = AutoModelForImageTextToText.from_pretrained(
             model_name,
-            torch_dtype=dtype,
+            dtype=dtype,
             device_map=cfg.model.local.device_map,
         )
         self.temperature = cfg.model.temperature
