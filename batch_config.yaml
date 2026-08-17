@@ -1,0 +1,46 @@
+# Batch Dense Description Pipeline Configuration
+#
+# Usage:
+#   python batch_dense_descriptions.py
+#   python batch_dense_descriptions.py --config batch_config.yaml
+#   python batch_dense_descriptions.py --resume output/batch/checkpoint.json
+
+model:
+  name: gemini-3.1-flash-lite
+  temperature: 0.2
+
+pipeline:
+  context_fps: 1
+  target_fps: 3
+  scene_threshold: 0.12
+  max_frames: 80
+  max_shot_duration: 10.0
+  frame_height: 480
+  context_window: 2
+  num_shots: 5
+
+batch:
+  # "vertex" uses Vertex AI (requires project/location, supports GCS)
+  # "gemini" uses Gemini API (requires GEMINI_API_KEY)
+  backend: gemini
+
+  # Vertex AI settings (only needed if backend: vertex)
+  project: ""
+  location: us-central1
+
+  # GCS bucket for batch I/O (optional — if empty, uses inlined requests)
+  gcs_bucket: ""
+
+  # Polling interval in seconds when waiting for batch completion
+  poll_interval: 30
+
+videos:
+  - id: rotary_3min
+    path: /home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline/output/rotary_3min/rotary_3min.mp4
+    dialogue_srt: /home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline/output/rotary_3min/rotary_3min.srt
+  - id: robbery_3min
+    path: /home/dbalu/workspace/ad_gen/visual_cues_per_shot/8fyjCygRaPc/8fyjCygRaPc_3min.mp4
+    dialogue_srt: /home/dbalu/workspace/ad_gen/demo/v2_voice_transcribe_idea/english/three_minute_srts/8fyjCygRaPc_part01.srt
+
+output:
+  dir: output/batch
