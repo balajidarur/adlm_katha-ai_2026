@@ -15,12 +15,11 @@ import glob
 import subprocess
 import re
 
-sys.path.insert(0, "/home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline")
-sys.path.insert(0, "/tmp/adlm_dense_descriptions")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from omegaconf import OmegaConf
 from PIL import Image, ImageDraw, ImageFont
-from prompts_adlm import ADLM_SYSTEM_PROMPT, ADLM_CHUNK_PROMPT, ADLM_DESCRIPTION_SCHEMA
+from prompts_adlm import ADLM_SYSTEM_PROMPT, ADLM_CHUNK_PROMPT, ADLM_DESCRIPTION_SCHEMA, GEMMA_CONCISENESS_SUFFIX
 from model_client import create_client
 
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -43,7 +42,7 @@ def mmss_to_seconds(mmss_str):
     return int(parts[0]) * 60 + float(parts[1])
 
 
-def detect_shots(video_path, threshold=0.12):
+def detect_shots(video_path, threshold=0.12, max_shot_duration=10.0):
     result = subprocess.run([
         "ffmpeg", "-i", video_path,
         "-vf", f"select='gt(scene,{threshold})',showinfo",
@@ -64,13 +63,28 @@ def detect_shots(video_path, threshold=0.12):
             change_points.append(float(match.group(1)))
     change_points.append(video_duration)
 
-    shots = []
+    raw_shots = []
     for i in range(len(change_points) - 1):
-        shots.append({
-            "id": i + 1,
-            "start": round(change_points[i], 3),
-            "end": round(change_points[i + 1], 3)
-        })
+        raw_shots.append((round(change_points[i], 3), round(change_points[i + 1], 3)))
+
+    shots = []
+    shot_id = 1
+    for start, end in raw_shots:
+        duration = end - start
+        if duration < 0.1:
+            continue
+        if duration <= max_shot_duration:
+            shots.append({"id": shot_id, "start": start, "end": end})
+            shot_id += 1
+        else:
+            cursor = start
+            while cursor < end:
+                chunk_end = min(cursor + max_shot_duration, end)
+                if chunk_end - cursor < 0.1:
+                    break
+                shots.append({"id": shot_id, "start": round(cursor, 3), "end": round(chunk_end, 3)})
+                shot_id += 1
+                cursor = chunk_end
     return shots
 
 
@@ -119,9 +133,16 @@ def burn_timestamp(frame_path, timestamp_str, output_path):
     img.save(output_path)
 
 
+def subsample(frames, max_count):
+    if len(frames) <= max_count:
+        return frames
+    indices = [int(i * (len(frames) - 1) / (max_count - 1)) for i in range(max_count)]
+    return [frames[i] for i in indices]
+
+
 def get_shifted_subtitles(srt_path, window_start, window_end, target_start, target_end, time_offset):
     import srt as srt_lib
-    if not os.path.exists(srt_path):
+    if not srt_path or not os.path.exists(srt_path):
         return "No dialogue track available."
     with open(srt_path, 'r', encoding='utf-8') as f:
         subs = list(srt_lib.parse(f.read()))
@@ -191,20 +212,29 @@ def main():
 
     video_path = cfg.video.path
     dialogue_srt = cfg.video.dialogue_srt
-    output_dir = cfg.output.dir
+    base_output_dir = cfg.output.dir
     context_fps = cfg.pipeline.context_fps
     target_fps = cfg.pipeline.target_fps
     threshold = cfg.pipeline.scene_threshold
     num_shots = cfg.pipeline.num_shots
+    max_frames = cfg.pipeline.max_frames
+    max_shot_duration = cfg.pipeline.get("max_shot_duration", 10.0)
     frame_height = cfg.pipeline.frame_height
 
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    model_id = cfg.model.name
+    system_prompt = ADLM_SYSTEM_PROMPT
+    if "gemma" in model_id.lower():
+        system_prompt = ADLM_SYSTEM_PROMPT + GEMMA_CONCISENESS_SUFFIX
+        print(f"Using conciseness-tuned prompt for {model_id}")
+    output_dir = os.path.join(base_output_dir, video_name, model_id)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Provider: {cfg.model.provider} | Model: {cfg.model.name}")
     client = create_client(cfg)
 
-    print(f"Detecting shots in {video_path} (threshold={threshold})...")
-    all_shots = detect_shots(video_path, threshold=threshold)
+    print(f"Detecting shots in {video_path} (threshold={threshold}, max_duration={max_shot_duration}s)...")
+    all_shots = detect_shots(video_path, threshold=threshold, max_shot_duration=max_shot_duration)
     print(f"Found {len(all_shots)} shots\n")
 
     for s in all_shots:
@@ -245,15 +275,35 @@ def main():
         for old in glob.glob(os.path.join(frames_dir, "*.jpg")):
             os.remove(old)
 
+        shot_frames = {}
+        for i in range(ctx_start, ctx_end + 1):
+            curr = shots[i]
+            is_target = (i == idx)
+            fps = target_fps if is_target else context_fps
+            prefix = f"shot_{curr['id']:03d}"
+            raw_frames = extract_frames(video_path, curr["start"], curr["end"], fps, frames_dir, prefix, frame_height)
+            shot_frames[i] = {"frames": raw_frames, "fps": fps, "is_target": is_target}
+
+        total_raw = sum(len(sf["frames"]) for sf in shot_frames.values())
+        if max_frames > 0 and total_raw > max_frames:
+            target_budget = int(max_frames * 0.6)
+            ctx_budget = max_frames - target_budget
+            n_ctx_shots = sum(1 for sf in shot_frames.values() if not sf["is_target"])
+            per_ctx = max(2, ctx_budget // max(n_ctx_shots, 1))
+            for i, sf in shot_frames.items():
+                if sf["is_target"]:
+                    sf["frames"] = subsample(sf["frames"], target_budget)
+                else:
+                    sf["frames"] = subsample(sf["frames"], per_ctx)
+
         parts = []
         frame_counts = {}
         total_frames = 0
         for i in range(ctx_start, ctx_end + 1):
             curr = shots[i]
-            c_start = curr["start"]
-            c_end = curr["end"]
-            is_target = (i == idx)
-            fps = target_fps if is_target else context_fps
+            sf = shot_frames[i]
+            is_target = sf["is_target"]
+            fps = sf["fps"]
 
             if is_target:
                 label = f"[TARGET SHOT | {target_fps} FPS]"
@@ -266,21 +316,18 @@ def main():
 
             parts.append({"type": "text", "text": label})
 
-            prefix = f"shot_{curr['id']:03d}"
-            raw_frames = extract_frames(video_path, c_start, c_end, fps, frames_dir, prefix, frame_height)
-
             role = "TARGET" if is_target else f"t-{idx-i}" if i < idx else f"t+{i-idx}"
-            frame_counts[curr["id"]] = (len(raw_frames), fps, role)
-            total_frames += len(raw_frames)
+            frame_counts[curr["id"]] = (len(sf["frames"]), fps, role)
+            total_frames += len(sf["frames"])
 
-            for frame_path, abs_time in raw_frames:
+            for frame_path, abs_time in sf["frames"]:
                 norm_time = abs_time - time_offset
                 ts_str = format_mmss(norm_time)
                 burnt_path = frame_path.replace(".jpg", "_ts.jpg")
                 burn_timestamp(frame_path, ts_str, burnt_path)
                 parts.append({"type": "image", "path": burnt_path})
 
-        print(f"  Frames: {total_frames} total")
+        print(f"  Frames: {total_frames} total (raw {total_raw}, max {max_frames})")
         for sid, (nf, fp, role) in frame_counts.items():
             print(f"    Shot {sid:3d} ({role:>6s}, {fp} FPS): {nf} frames")
 
@@ -308,7 +355,7 @@ def main():
 
         try:
             resp = client.generate(
-                system_prompt=ADLM_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 parts=parts,
                 schema=ADLM_DESCRIPTION_SCHEMA
             )

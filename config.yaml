@@ -12,7 +12,7 @@ model:
   #   API Gemini:  gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.1-flash-lite, ...
   #   API Gemma:   gemma-4-26b-a4b-it, gemma-4-31b-it
   #   Local Gemma: google/gemma-4-E2B-it, google/gemma-4-E4B-it, google/gemma-4-12B-it, ...
-  name: gemini-3.1-pro-preview
+  name: gemini-3.1-flash-lite
   temperature: 0.2
 
   # Local-only settings (ignored when provider=api)
@@ -22,15 +22,17 @@ model:
     max_new_tokens: 8192
 
 video:
-  path: output/rotary_3min/rotary_3min.mp4
-  dialogue_srt: output/rotary_3min/rotary_3min.srt
+  path: /home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline/output/rotary_3min/rotary_3min.mp4
+  dialogue_srt: /home/dbalu/workspace/ad_gen/multi_language/srt_for_ads/pipeline/output/rotary_3min/rotary_3min.srt
 
 pipeline:
   context_fps: 1
   target_fps: 3
   scene_threshold: 0.12
   num_shots: 0              # 0 = all
+  max_frames: 80            # max total frames per API call (target + context combined)
+  max_shot_duration: 10.0   # seconds — shots longer than this are split
   frame_height: 480
 
 output:
-  dir: /tmp/adlm_dense_descriptions/output
+  dir: output
