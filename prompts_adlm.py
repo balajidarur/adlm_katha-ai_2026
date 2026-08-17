@@ -80,13 +80,24 @@ For the TARGET SHOT only, output:
 ## Event description guidelines
 - Each event must have a timestamp in MM:SS.m format that falls within the target shot's timecode range.
 - Use the burnt-in frame timestamps as your reference — your event timestamps should correspond to what you see in the frames.
-- Break the shot into discrete visual moments.
+- Each event must capture one atomic visual action — a single distinct change visible in the frames.
 - Events that happen simultaneously should share the same timestamp.
-- Describe what you SEE, not what you infer or interpret. State observable facts.
+- Describe ONLY what is physically visible in the frame. No inferences, no emotional labels, no interpretations of intent.
 - Be specific about spatial relationships: "on the left", "in the background", "facing the camera".
 - Mention camera movement if notable: pan, zoom, tracking, static.
 - Include on-screen text verbatim (titles, signs, captions).
 - Describe actions in present tense: "He opens the door", not "He opened the door".
+
+### Gestures and expressions (CRITICAL)
+- Never use emotional labels like "angry", "happy", "tense", "concerned", "nervous". Describe the physical appearance instead:
+  - BAD: "She looks angry"
+  - GOOD: "Her eyebrows draw together, lips press into a thin line, jaw tightens"
+- For gestures, describe the exact physical movement — limb positions, hand shapes, body angles:
+  - BAD: "He gestures dismissively"
+  - GOOD: "He raises his right hand palm-outward to shoulder height, fingers splayed, then drops it to his side"
+- For body language, describe posture and position changes:
+  - BAD: "She stands nervously"
+  - GOOD: "She shifts her weight to her left foot, arms crossed tightly against her chest, chin lowered"
 
 ## Character referencing (CRITICAL)
 - Every time you mention a character in an event description, you MUST include their character registry ID in square brackets immediately after their name.
@@ -139,6 +150,16 @@ Return JSON with:
 - "events": array of {"timestamp": "MM:SS.m", "description": "..."} — timestamped visual events in chronological order
 - "new_characters": array — new characters only (empty [] if none)
 """
+
+
+# --- Model-specific prompt additions ---
+
+GEMMA_CONCISENESS_SUFFIX = """
+
+## Conciseness (CRITICAL)
+- Each event MUST describe a DISTINCT visual change. Never repeat or rephrase the same observation.
+- If the scene is static (e.g., a logo, a still frame, a character standing), one or two events are enough — do not pad with reworded descriptions.
+- Before outputting, review your events and remove any that overlap with another event's content."""
 
 
 # --- Per-shot prompt template ---
