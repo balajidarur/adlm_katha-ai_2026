@@ -250,6 +250,8 @@ def main():
     os.makedirs(frames_dir, exist_ok=True)
 
     character_registry = []
+    props_registry = []
+    location_registry = []
     results = []
     description_history = []
 
@@ -339,17 +341,18 @@ def main():
         history_lines = description_history[-4:]
         recent_history = "\n".join(history_lines) if history_lines else "None (first shot)"
 
-        if character_registry:
-            reg_text = json.dumps(character_registry, indent=2)
-        else:
-            reg_text = "Empty — no characters registered yet."
+        reg_text = json.dumps(character_registry, indent=2) if character_registry else "Empty — no characters registered yet."
+        props_text = json.dumps(props_registry, indent=2) if props_registry else "Empty — no props registered yet."
+        loc_text = json.dumps(location_registry, indent=2) if location_registry else "Empty — no locations registered yet."
 
         prompt_text = ADLM_CHUNK_PROMPT.format(
             start_timecode=norm_target_start,
             end_timecode=norm_target_end,
             subs_text=subs_text,
             recent_history=recent_history,
-            character_registry=reg_text
+            character_registry=reg_text,
+            props_registry=props_text,
+            location_registry=loc_text
         )
         parts.append({"type": "text", "text": prompt_text})
 
@@ -362,11 +365,21 @@ def main():
             resp_data = resp["data"]
             events = resp_data.get("events", [])
             new_chars = resp_data.get("new_characters", [])
+            new_props = resp_data.get("new_props", [])
+            new_locs = resp_data.get("new_locations", [])
 
             for nc in new_chars:
                 if not any(c["id"] == nc["id"] for c in character_registry):
                     character_registry.append(nc)
                     print(f"  NEW CHARACTER: {nc['name']} ({nc['id']}) — {nc.get('appearance', '')[:60]}")
+            for np_ in new_props:
+                if not any(p["id"] == np_["id"] for p in props_registry):
+                    props_registry.append(np_)
+                    print(f"  NEW PROP: {np_['name']} ({np_['id']})")
+            for nl in new_locs:
+                if not any(l["id"] == nl["id"] for l in location_registry):
+                    location_registry.append(nl)
+                    print(f"  NEW LOCATION: {nl['name']} ({nl['id']})")
 
             shot["adlm_events"] = events
 
@@ -389,7 +402,9 @@ def main():
                 "end_timecode": norm_target_end,
                 "time_offset": time_offset,
                 "events": events,
-                "new_characters": new_chars
+                "new_characters": new_chars,
+                "new_props": new_props,
+                "new_locations": new_locs
             })
 
         except Exception as e:
@@ -402,7 +417,9 @@ def main():
                 "end_timecode": norm_target_end,
                 "time_offset": time_offset,
                 "events": [],
-                "new_characters": []
+                "new_characters": [],
+                "new_props": [],
+                "new_locations": []
             })
 
     output_file = os.path.join(output_dir, "adlm_descriptions.json")
@@ -416,6 +433,8 @@ def main():
             "context_fps": context_fps,
             "target_fps": target_fps,
             "character_registry": character_registry,
+            "props_registry": props_registry,
+            "location_registry": location_registry,
             "shots": results
         }, f, indent=2, ensure_ascii=False)
 
@@ -432,6 +451,12 @@ def main():
     print(f"Characters found: {len(character_registry)}")
     for c in character_registry:
         print(f"  - {c['name']} ({c['id']}): {c.get('appearance', 'N/A')}")
+    print(f"Props found: {len(props_registry)}")
+    for p in props_registry:
+        print(f"  - {p['name']} ({p['id']})")
+    print(f"Locations found: {len(location_registry)}")
+    for l in location_registry:
+        print(f"  - {l['name']} ({l['id']})")
     print(f"{'='*60}")
 
 
