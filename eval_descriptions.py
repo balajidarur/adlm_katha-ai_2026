@@ -35,7 +35,7 @@ VIDEOS = {
 }
 
 # Only these models are surfaced, in this order.
-MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
+MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemma-4-31b-it"]
 
 
 def parse_mmss(ts):
