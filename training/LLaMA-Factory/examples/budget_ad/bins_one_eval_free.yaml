@@ -1,0 +1,31 @@
+### model
+model_name_or_path: Qwen/Qwen3.5-4B
+adapter_name_or_path: /data/cmd_ad/runs/bins_one
+trust_remote_code: true
+flash_attn: fa2
+new_special_tokens_config: examples/budget_ad/bin_tokens.yaml
+init_special_tokens: desc_init
+resize_vocab: false
+
+### method
+stage: sft
+do_predict: true
+finetuning_type: lora
+budget_variant: none
+predict_with_generate: true
+max_new_tokens: 2048
+do_sample: false
+
+### dataset — same 16 clips we overfit on
+eval_dataset: ad_bins_one
+template: qwen
+cutoff_len: 17408
+overwrite_cache: true
+
+### output
+output_dir: /data/cmd_ad/runs/bins_one/pred_free
+overwrite_output_dir: true
+report_to: none
+per_device_eval_batch_size: 1
+bf16: true
+skip_special_tokens: false

@@ -1,0 +1,49 @@
+### model
+model_name_or_path: Qwen/Qwen3.5-4B
+trust_remote_code: true
+flash_attn: fa2
+enable_liger_kernel: true          # fused CE: 16k x 248320 logits would be ~8 GB otherwise
+
+### the 9 budget-bin tokens
+new_special_tokens_config: examples/budget_ad/bin_tokens.yaml
+init_special_tokens: desc_init     # seed each row from its description, not noise
+resize_vocab: false                # ids 248077-248085 fit the existing 248320 rows
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_target: all
+additional_target: embed_tokens    # required: tied lm_head, else new tokens can't be emitted
+restrict_new_token_grad: true      # ...but only the 9 new rows actually move
+budget_variant: none               # pure LM - no duration head
+pure_bf16: true
+
+### dataset
+dataset: ad_bins_overfit
+template: qwen
+cutoff_len: 17408
+overwrite_cache: true
+preprocessing_num_workers: 4
+dataloader_num_workers: 2
+
+### output
+output_dir: /data/cmd_ad/runs/bins_overfit
+logging_steps: 1
+save_steps: 30
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+num_train_epochs: 30.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000

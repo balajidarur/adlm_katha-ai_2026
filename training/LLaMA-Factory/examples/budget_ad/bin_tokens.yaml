@@ -1,0 +1,12 @@
+# Descriptions are used by init_special_tokens=desc_init to seed each new
+# token's embedding from the mean of its description's token embeddings,
+# instead of random noise. Same wording as the legend in the prompt.
+"<|budget_0|>": "less than half a second of silence remains before the next line of dialogue"
+"<|budget_1|>": "between half a second and one second of silence remains before the next line of dialogue"
+"<|budget_2|>": "between one and one and a half seconds of silence remain before the next line of dialogue"
+"<|budget_3|>": "between one and a half and two seconds of silence remain before the next line of dialogue"
+"<|budget_4|>": "between two and two and a half seconds of silence remain before the next line of dialogue"
+"<|budget_5|>": "between two and a half and three seconds of silence remain before the next line of dialogue"
+"<|budget_6|>": "between three and three and a half seconds of silence remain before the next line of dialogue"
+"<|budget_7|>": "between three and a half and four seconds of silence remain before the next line of dialogue"
+"<|budget_8|>": "more than four seconds of silence remain before the next line of dialogue"

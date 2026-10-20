@@ -1,0 +1,62 @@
+### Full CMD-AD run, Qwen3.8-27B dense descriptions (else identical to bins_frames_full.yaml), 4x L40S
+### bins_f150_40k built from Qwen3.8 dense: 7,763 clips, frames <=150, <=40k tokens
+model_name_or_path: Qwen/Qwen3.5-4B
+trust_remote_code: true
+image_max_pixels: 589824        # 448x252 = 112,896 px -> frames never resized
+image_min_pixels: 1024
+enable_liger_kernel: true       # mandatory: 248k vocab
+
+### the 9 budget-bin tokens
+new_special_tokens_config: examples/budget_ad/bin_tokens.yaml
+init_special_tokens: desc_init
+resize_vocab: false
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target: all
+freeze_vision_tower: true
+additional_target: embed_tokens     # tied lm_head -> required to emit new tokens
+restrict_new_token_grad: true       # only the 9 new rows move
+special_token_loss_weight: 1.0
+budget_variant: none
+pure_bf16: true
+
+### dataset
+dataset_dir: /data/cmd_ad/datasets/frame_variants_448x252_full_qwen38
+dataset: bins_f150_40k
+template: qwen3_5_nothink
+cutoff_len: 49152
+max_samples: 1000000
+overwrite_cache: false
+tokenized_path: /prep/tokcache/qwen38_bins_f150_40k
+preprocessing_num_workers: 48
+dataloader_num_workers: 8
+
+### output
+output_dir: /prep/runs/qwen38_bins_frames_full
+logging_steps: 5
+save_steps: 20
+save_total_limit: 12
+plot_loss: true
+overwrite_output_dir: false
+report_to: wandb
+run_name: qwen38-bins-frames-full-4xl40s
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8     # 1 x 8 x 4 GPUs = effective batch 32
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+gradient_checkpointing: true       # required at this context length
+train_sampling_strategy: group_by_length
+save_only_model: false             # keeps optimizer state -> resumable
+ddp_timeout: 180000000
+ddp_find_unused_parameters: false
