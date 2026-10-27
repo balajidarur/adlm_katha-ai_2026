@@ -1,0 +1,60 @@
+### REFRAMED train, Qwen3.8-27B scene-shot dense descriptions, US ADs with measured word times -> budget bins
+### identical to qwen38_bins_frames_full.yaml (CMD-AD) except data/output paths and saving once per epoch
+model_name_or_path: Qwen/Qwen3.5-4B
+trust_remote_code: true
+image_max_pixels: 589824        # 448x252 = 112,896 px -> frames never resized
+image_min_pixels: 1024
+enable_liger_kernel: true       # mandatory: 248k vocab
+
+### the 9 budget-bin tokens
+new_special_tokens_config: examples/budget_ad/bin_tokens.yaml
+init_special_tokens: desc_init
+resize_vocab: false
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target: all
+freeze_vision_tower: true
+additional_target: embed_tokens     # tied lm_head -> required to emit new tokens
+restrict_new_token_grad: true       # only the 9 new rows move
+special_token_loss_weight: 1.0
+budget_variant: none
+pure_bf16: true
+
+### dataset
+dataset_dir: /scratch/rf_datasets/frame_variants_448x252
+dataset: reframed_ovf5
+template: qwen3_5_nothink
+cutoff_len: 49152
+max_samples: 1000000
+overwrite_cache: false
+preprocessing_num_workers: 48
+dataloader_num_workers: 8
+
+### output
+output_dir: /scratch/runs/overfit5
+logging_steps: 1
+save_strategy: "no"                # key checkpoints = end of epoch 1 / 2 / 3
+save_total_limit: 3
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+run_name: reframed-qwen38-bins-frames-4xl40s
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1     # 1 x 8 x 4 GPUs = effective batch 32
+learning_rate: 1.0e-4
+num_train_epochs: 30.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+gradient_checkpointing: true       # required at this context length
+save_only_model: false             # keeps optimizer state -> resumable
+ddp_timeout: 180000000
+ddp_find_unused_parameters: false

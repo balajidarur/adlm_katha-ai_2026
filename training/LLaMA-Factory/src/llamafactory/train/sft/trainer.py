@@ -315,7 +315,8 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             # the dialogue lines, and stripping them would change what the model sees
             target = tok.decode(keep, skip_special_tokens=False)
             target = target.replace(tok.eos_token or "", "").replace(tok.pad_token or "", "")
-            prompt_ids = inputs["input_ids"][b][lab == IGNORE_INDEX].tolist()
+            prompt_mask = lab == IGNORE_INDEX
+            prompt_ids = inputs["input_ids"][b][prompt_mask].tolist()
             # Build the KV cache once over the prompt, then extend it. Rebuilding
             # the whole prefix for every audio description costs an O(n^2) attention
             # pass each time - 27 GB on a 30k-token clip, and far slower besides.
@@ -337,7 +338,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                 for i in range(0, len(tok_ids), chunk):
                     blk = tok_ids[i:i + chunk]
                     out = model(input_ids=torch.tensor([blk], device=dev),
-                                past_key_values=past, use_cache=True,
+                                past_key_values=past, use_cache=True, logits_to_keep=1,
                                 output_hidden_states=(self.dur_head is not None
                                                       and not (cap is not None and cap.ok)))
                     past = out.past_key_values
@@ -349,7 +350,27 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                     logger.info_rank0(f"[tf] fed {len(tok_ids)} tok -> cache len {L}")
                 return out
 
-            feed(prompt_ids)
+            # The prompt carries the frames: it must go through the model once, whole, with the image
+            # tensors and M-RoPE inputs. (Feeding input_ids alone - as before 2026-10-28 - left every
+            # <image> slot as a bare pad embedding, so teacher-forced eval never saw a frame.) This first
+            # pass also sets the model's rope_deltas, which the cached, text-only steps below rely on to
+            # place later tokens after the images.
+            past = None
+            for mod in model.modules():
+                if hasattr(mod, "rope_deltas"):
+                    mod.rope_deltas = None              # per clip: recompute from this prompt's images
+            mm = {k: inputs[k] for k in ("pixel_values", "image_grid_thw") if inputs.get(k) is not None}
+            if mm:
+                assert inputs["input_ids"].size(0) == 1, "teacher-forced eval with images needs batch size 1"
+                ids = torch.tensor([prompt_ids], device=dev)
+                img_tok = getattr(getattr(model, "config", None), "image_token_id", None)
+                mmtt = torch.zeros_like(ids)
+                if img_tok is not None:
+                    mmtt[ids == img_tok] = 1
+                out = model(input_ids=ids, use_cache=True, logits_to_keep=1, mm_token_type_ids=mmtt, **mm)
+                past = out.past_key_values
+            else:
+                feed(prompt_ids)
             for line in target.split("\n"):
                 m = ad_prefix_re.match(line)
                 if not m:                                    # dialogue line: forced
