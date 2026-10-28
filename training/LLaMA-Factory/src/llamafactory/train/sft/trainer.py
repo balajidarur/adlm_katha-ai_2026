@@ -377,8 +377,13 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                     feed(tok(line, add_special_tokens=False)["input_ids"] + nl)
                     produced.append(line)
                     continue
-                # force the "M:SS.s [AD] " prefix; its logits give the first AD token
-                out = feed(tok(m.group(1), add_special_tokens=False)["input_ids"])
+                # force "M:SS.s [AD]" without the trailing space; its logits give the first AD token.
+                # The space belongs to the body: plain ADs tokenize as "]", " The" (a lone " " never
+                # follows "]" in no-budget training), budget ADs as "]", " ", "<|budget_k|>". Forcing the
+                # space (as before 2026-10-28 11:30) put no-budget models off-distribution - they copied
+                # the previous AD or wrote digits - while budget models were unaffected.
+                pre = m.group(1).rstrip(" ")
+                out = feed(tok(pre, add_special_tokens=False)["input_ids"])
                 gen = []
                 for _ in range(max_ad):
                     nxt = int(out.logits[0, -1].argmax())
@@ -391,7 +396,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                             else out.hidden_states[-1][0, -1:]
                         dur_log.append(round(float(self.dur_head(h)[0]), 3))
                 feed(nl)
-                produced.append(m.group(1) + tok.decode(gen, skip_special_tokens=False))
+                produced.append(pre + tok.decode(gen, skip_special_tokens=False))
             del past
             torch.cuda.empty_cache()
             raw = "\n".join(produced)
