@@ -41,7 +41,8 @@ def strip(t):
 
 
 def key(r):
-    return tuple(r["images"])
+    """Frames + unbinned assistant text: frames alone are not unique (two clips share a frame list)."""
+    return tuple(r["images"]), strip(r["messages"][1]["content"])
 
 
 def build(src, meta, ref, budget):
@@ -49,13 +50,14 @@ def build(src, meta, ref, budget):
     data, mt = json.load(open(src)), json.load(open(meta))
     assert len(data) == len(mt)
     ref = json.load(open(ref))
-    want = {key(r): i for i, r in enumerate(ref)}
+    want = {}
+    for i, r in enumerate(ref):
+        want.setdefault(key(r), []).append(i)
     out = [None] * len(ref)
     for rec, m in zip(data, mt):
         ab["convert"](rec, m.get("video_id") or m.get("vid"), budget)
         mk["cap"](rec)
-        i = want.get(key(rec))
-        if i is not None:
+        for i in want.get(key(rec), []):
             out[i] = rec
     miss = sum(r is None for r in out)
     assert miss == 0, f"{miss} reference clips not rebuilt"
