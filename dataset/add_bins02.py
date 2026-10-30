@@ -10,9 +10,11 @@ only BIN_EDGES / BIN_TOKENS / BIN_LEGEND are swapped. The clip set is not re-fil
 0.5 s dataset is rebuilt from its unbinned source record and capped with the same mk150.cap(), so clips and
 frames match one for one (asserted).
 
+  eval527 is rebinned in place (rebin_ref): its frames were capped differently from the source records.
+
   python add_bins02.py --q /data/cmd_ad/datasets/frame_variants_448x252_full_qwen38 --out /prep/bins02
 """
-import argparse, json, os, sys
+import argparse, json, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ab = {}
@@ -68,6 +70,22 @@ def build(src, meta, ref, budget):
     return out
 
 
+def rebin_ref(ref):
+    """Rebin a 0.5 s file in place: drop its legend and tokens, then convert() with the 0.2 s grid.
+    Used for eval527, whose frames were capped differently from the source records."""
+    out = json.load(open(ref))
+    for r in out:
+        r["messages"][0]["content"] = r["messages"][0]["content"].split("\n\n", 1)[1]
+        r["messages"][1]["content"] = re.sub(r"\[AD\] +", "[AD] ", strip(r["messages"][1]["content"]))
+        r["messages"][1]["content"] = re.sub(r" {2,}", " ", r["messages"][1]["content"])
+        ab["convert"](r, r["images"][0].split("/")[-2], BUDGET)
+    old = json.load(open(ref))
+    for a, b in zip(out, old):
+        assert a["images"] == b["images"]
+        assert strip(a["messages"][1]["content"]).split() == strip(b["messages"][1]["content"]).split()
+    return out
+
+
 def bin_stats(recs):
     import re
     c = [0] * (N + 1)
@@ -83,10 +101,13 @@ if __name__ == "__main__":
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    budget = ab["load_budget"]()
+    BUDGET = budget = ab["load_budget"]()
     for name, src, ref in (("bins02_f150_40k", "cmdad_dds_gapframes_train", "gapframes_bins_train_f150_40k.json"),
-                           ("bins02_eval527", "cmdad_dds_gapframes_eval", "eval527.json")):
-        recs = build(f"{a.q}/{src}.json", f"{a.q}/{src}_meta.json", f"{a.q}/{ref}", budget)
+                           ("bins02_eval527", None, "eval527.json")):
+        if os.path.exists(f"{a.out}/{name}.json"):
+            print(name, "exists, skipped"); continue
+        recs = (build(f"{a.q}/{src}.json", f"{a.q}/{src}_meta.json", f"{a.q}/{ref}", budget) if src
+                else rebin_ref(f"{a.q}/{ref}"))
         json.dump(recs, open(f"{a.out}/{name}.json", "w"), ensure_ascii=False)
         print(name, len(recs), "clips | tokens per bin:", bin_stats(recs), flush=True)
     info = json.load(open(f"{a.q}/dataset_info.json"))
