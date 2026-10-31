@@ -1,6 +1,6 @@
-# Box C: resume qwen38_bins02_frames_full from checkpoint-500 (epoch 2.06) and finish epoch 3 (step 729).
+# Box C: resume qwen38_bins02_frames_full from checkpoint-$FROM (default 500) and finish epoch 3 (step 729).
 # /scratch was wiped on stop: re-pull code (git bundle, commit-checked), dataset and the full checkpoint-500 (optimizer + rng) from S3.
-WANT=$1
+WANT=$1; FROM=${2:-500}
 set -x
 sudo touch /etc/gpu-idle-shutdown.disable
 mountpoint -q /scratch || { sudo mkfs.ext4 -q -F /dev/nvme2n1 && sudo mkdir -p /scratch && sudo mount /dev/nvme2n1 /scratch && sudo chown ubuntu:ubuntu /scratch; }
@@ -13,9 +13,9 @@ aws s3 cp --only-show-errors $B/code/adlm_$WANT.bundle /scratch/adlm.bundle
 rm -rf $R && git clone -q -b qwen38-dense-dataset-training /scratch/adlm.bundle $R
 HAVE=$(git -C $R rev-parse --short HEAD); echo "COMMIT $HAVE (want $WANT)"; [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH; exit 1; }
 aws s3 cp --only-show-errors --recursive $B/datasets/cmdad_qwen38_bins02/ /scratch/bins02/
-aws s3 cp --only-show-errors --recursive $M/checkpoint-500/ $OUT/checkpoint-500/
-ls $OUT/checkpoint-500 | wc -l
-for n in $(seq 20 20 500); do touch /scratch/synced_checkpoint-$n; done      # already in S3
+aws s3 cp --only-show-errors --recursive $M/checkpoint-$FROM/ $OUT/checkpoint-$FROM/
+ls $OUT/checkpoint-$FROM | wc -l
+for n in $(seq 20 20 $FROM); do touch /scratch/synced_checkpoint-$n; done      # already in S3
 
 export PYTHONPATH=$LF/src HF_HOME=$HOME/adlm/hf_cache HF_HUB_OFFLINE=1 HF_DATASETS_CACHE=/scratch/hf_datasets \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FORCE_TORCHRUN=1 WANDB_DIR=/scratch/wandb WANDB_PROJECT=adlm-bins-frames
@@ -34,5 +34,5 @@ echo "TRAINER_MD5 $(md5sum $LF/src/llamafactory/train/sft/trainer.py | cut -c1-1
     sleep 60; done ) &
 
 cd $LF && echo "TRAIN_START $(date +%T)"
-llamafactory-cli train examples/budget_ad/qwen38_bins02_frames_full.yaml resume_from_checkpoint=$OUT/checkpoint-500 > /scratch/runs/train_bins02_resume.log 2>&1
+llamafactory-cli train examples/budget_ad/qwen38_bins02_frames_full.yaml resume_from_checkpoint=$OUT/checkpoint-$FROM > /scratch/runs/train_bins02_resume.log 2>&1
 echo "TRAIN_EXIT $? $(date +%T)"
