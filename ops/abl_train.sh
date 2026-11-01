@@ -1,9 +1,11 @@
 # Input ablations (A2 / A3 / A4) on top of M3: same config as qwen38_bins_frames_full.yaml, only the dataset differs.
-#   bash abl_train.sh <name: a2_noframes|a3_nodds|a4_dlgph> <commit> <n_gpus> <grad_accum>
+#   bash abl_train.sh <name: a2_noframes|a3_nodds|a4_dlgph> <commit> <n_gpus> <grad_accum> [resume_step]
+# resume_step: continue from s3 .../qwen38-dd_<name>/checkpoint-<step> (full dir: optimizer, scheduler, rng), e.g. when
+# moving a run to a box with a different GPU count - grad_accum is chosen so the effective batch stays 32.
 # Effective batch is kept at 32 = 1 x grad_accum x n_gpus (4 GPUs -> 8, 1 GPU -> 32). 3-epoch schedule, stopped once the
 # epoch-2 checkpoints (480 = 1.98 ep, 500 = 2.06 ep) are in S3. Code = commit-checked clone (git bundle from S3);
 # dataset = the locked JSONs in s3 adlm/datasets/cmdad_qwen38_ablations (SHA256SUMS verified). Never writes to /data.
-NAME=$1; WANT=$2; NG=$3; GA=$4
+NAME=$1; WANT=$2; NG=$3; GA=$4; FROM=${5:-}
 set -x
 export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 sudo touch /etc/gpu-idle-shutdown.disable
@@ -62,6 +64,13 @@ echo "LF_IMPORT $(python -c 'import llamafactory, os; print(os.path.dirname(llam
 echo "TRAINER_MD5 $(md5sum $LF/src/llamafactory/train/sft/trainer.py | cut -c1-10)"
 echo "GPUS $(nvidia-smi -L | wc -l) (want $NG) | effective batch = 1 x $GA x $NG = $((GA * NG))"
 
+RESUME=""
+if [ -n "$FROM" ]; then
+  aws s3 cp --only-show-errors --recursive $M/checkpoint-$FROM/ $OUT/checkpoint-$FROM/
+  echo "RESUME_FROM checkpoint-$FROM ($(ls $OUT/checkpoint-$FROM | wc -l) files)"
+  for n in $(seq 20 20 $FROM); do touch $W/synced_checkpoint-$n; done
+  RESUME="resume_from_checkpoint=$OUT/checkpoint-$FROM"
+fi
 ( while true; do . $W/creds.env
     for c in $OUT/checkpoint-*; do [ -f $c/trainer_state.json ] || continue; n=$(basename $c)
       [ -f $W/synced_$n ] && continue
@@ -75,7 +84,7 @@ echo "GPUS $(nvidia-smi -L | wc -l) (want $NG) | effective batch = 1 x $GA x $NG
 cd $LF && echo "TRAIN_START $(date +%T)"
 llamafactory-cli train examples/budget_ad/qwen38_bins_frames_full.yaml \
   dataset_dir=$D dataset=${NAME}_f150_40k tokenized_path=$W/tokcache/$NAME output_dir=$OUT run_name=qwen38-$NAME \
-  gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) \
+  gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) $RESUME \
   > $W/runs/train_$NAME.log 2>&1
 echo "TRAIN_EXIT $? $(date +%T)"
 . $W/creds.env; aws s3 cp --only-show-errors $W/runs/train_$NAME.log $M/train.log
