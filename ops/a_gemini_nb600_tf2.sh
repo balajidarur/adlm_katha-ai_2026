@@ -11,11 +11,11 @@ export PATH=$HOME/.local/bin:$PATH
 aws configure set default.s3.max_concurrent_requests 64
 B=s3://balu-transfer-933516006154-apne1/adlm
 R=/scratch/adlm_repo; LF=$R/training/LLaMA-Factory; CK=/scratch/ckpt/gemini_nobudget_600; D=/data/cmd_ad/datasets/nobudget_frames
-O=/scratch/inf/out; N=gemini_nobudget_600_tf2
+O=/scratch/inf/out; N=gemini_nobudget_600_tf2; P=$B/inference/cmdad/eval527/gemini-dd_nobudget_ckpt600/teacher_forced
 aws s3 cp --only-show-errors $B/code/adlm_$WANT.bundle /scratch/adlm.bundle
 rm -rf $R && git clone -q -b qwen38-dense-dataset-training /scratch/adlm.bundle $R
 HAVE=$(git -C $R rev-parse --short HEAD); echo "COMMIT $HAVE (want $WANT)"; [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH; exit 1; }
-aws s3 cp --only-show-errors --recursive $B/ckpts/cmdad_gemini_nobudget/checkpoint-600/ $CK/ --exclude "optimizer.pt" --exclude "rng_state*" --exclude "scheduler.pt"
+aws s3 cp --only-show-errors --recursive $B/models/cmdad/gemini-dd_nobudget/checkpoint-600/ $CK/ --exclude "optimizer.pt" --exclude "rng_state*" --exclude "scheduler.pt"
 ls $CK/adapter_model.safetensors || { echo CKPT_MISSING; exit 1; }
 ls $D/dataset_info.json || { echo DATASET_MISSING; exit 1; }
 export PYTHONPATH=$LF/src PATH=$HOME/adlm/venv/bin:$PATH HF_HOME=$HOME/adlm/hf_cache HF_HUB_OFFLINE=1 \
@@ -34,5 +34,5 @@ echo "$(date +%T) START $N" >> /scratch/inf/queue.log
 llamafactory-cli train examples/budget_ad/q_$N.yaml > $O/$N.log 2>&1; rc=$?
 echo "$(date +%T) END $N exit=$rc rows=$(cat $O/$N/*_predictions.jsonl 2>/dev/null | wc -l)" >> /scratch/inf/queue.log
 . /scratch/creds.env
-aws s3 sync --only-show-errors $O/$N $B/preds/free4096/$N/ --exclude "*" --include "*.jsonl" --include "*.json"
-aws s3 cp --only-show-errors $O/$N.log $B/preds/free4096/$N/ && echo "$(date +%T) SYNCED $N" >> /scratch/inf/queue.log
+aws s3 sync --only-show-errors $O/$N $P/ --exclude "*" --include "*.jsonl" --include "*.json"
+aws s3 cp --only-show-errors $O/$N.log $P/ && echo "$(date +%T) SYNCED $N" >> /scratch/inf/queue.log
