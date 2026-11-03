@@ -19,7 +19,8 @@ BUDGET = 40000
 
 
 def vid_of(rec):
-    return rec["images"][0].split("/")[-2]
+    # a clip with no frames (2 in M3 train) is keyed by its target, which the dense descriptions don't change
+    return rec["images"][0].split("/")[-2] if rec["images"] else rec["messages"][-1]["content"]
 
 
 def sha(p):
@@ -33,8 +34,7 @@ def sha(p):
 def pick(src, ref, name, drop_over):
     by_vid = {}
     for r in json.load(open(src)):
-        if r["images"]:
-            by_vid[vid_of(r)] = r
+        by_vid[vid_of(r)] = r
     out, missing, over = [], [], []
     for r in json.load(open(ref)):
         v = vid_of(r)
