@@ -5,6 +5,8 @@
 # Effective batch is kept at 32 = 1 x grad_accum x n_gpus (4 GPUs -> 8, 1 GPU -> 32). 3-epoch schedule, stopped once the
 # epoch-2 checkpoints (480 = 1.98 ep, 500 = 2.06 ep) are in S3. Code = commit-checked clone (git bundle from S3);
 # dataset = the locked JSONs in s3 adlm/datasets/cmdad_qwen38_ablations (SHA256SUMS verified). Never writes to /data.
+# Env DSDIR / MODEL_DIR override the S3 dataset dir and model name (e.g. DSDIR=cmdad_qwen35_4b_dd MODEL_DIR=qwen35_4b-dd_bins);
+# STOP_AT=<step> stops after that checkpoint is in S3 (default 500 = epoch 2); STOP_AT= runs all 3 epochs.
 NAME=$1; WANT=$2; NG=$3; GA=$4; FROM=${5:-}
 set -x
 export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
@@ -19,8 +21,8 @@ fi
 echo "WORKDIR $W"
 mv /tmp/cr.env $W/creds.env 2>/dev/null; chmod 600 $W/creds.env; . $W/creds.env
 aws configure set default.s3.max_concurrent_requests 64; aws configure set default.s3.multipart_chunksize 64MB
-B=s3://balu-transfer-933516006154-apne1/adlm
-R=$W/adlm_repo; LF=$R/training/LLaMA-Factory; D=$W/abl; OUT=$W/runs/qwen38_$NAME; M=$B/models/cmdad/qwen38-dd_$NAME
+B=s3://balu-transfer-933516006154-apne1/adlm; DS=$B/datasets/${DSDIR:-cmdad_qwen38_ablations}
+R=$W/adlm_repo; LF=$R/training/LLaMA-Factory; D=$W/abl; OUT=$W/runs/qwen38_$NAME; M=$B/models/cmdad/${MODEL_DIR:-qwen38-dd_$NAME}
 aws s3 cp --only-show-errors $B/code/adlm_$WANT.bundle $W/adlm.bundle
 rm -rf $R && git clone -q -b qwen38-dense-dataset-training $W/adlm.bundle $R
 HAVE=$(git -C $R rev-parse --short HEAD); echo "COMMIT $HAVE (want $WANT)"; [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH; exit 1; }
@@ -33,9 +35,9 @@ fi
 
 # dataset: locked JSONs, checksums verified
 mkdir -p $D && cd $D
-aws s3 cp --only-show-errors $B/datasets/cmdad_qwen38_ablations/SHA256SUMS .
-aws s3 cp --only-show-errors $B/datasets/cmdad_qwen38_ablations/dataset_info.json .
-for s in f150_40k eval527; do aws s3 cp --only-show-errors $B/datasets/cmdad_qwen38_ablations/${NAME}_$s.json .; done
+aws s3 cp --only-show-errors $DS/SHA256SUMS .
+aws s3 cp --only-show-errors $DS/dataset_info.json .
+for s in f150_40k eval527; do aws s3 cp --only-show-errors $DS/${NAME}_$s.json .; done
 grep -E "${NAME}_|dataset_info" SHA256SUMS | sha256sum -c - || { echo SHA_MISMATCH; exit 1; }
 cd $HOME
 
@@ -78,7 +80,7 @@ fi
     done
     aws s3 cp --only-show-errors $OUT/trainer_log.jsonl $M/trainer_log.jsonl 2>/dev/null
     sleep 60; done ) &
-( while [ ! -f $W/synced_checkpoint-500 ]; do sleep 60; done
+[ "${STOP_AT-500}" ] && ( while [ ! -f $W/synced_checkpoint-${STOP_AT-500} ]; do sleep 60; done
   echo "$(date +%T) EPOCH2_STOP" >> $W/ckpt_sync.log; pkill -f "qwen38_bins_frames_full.yaml" ) &
 
 cd $LF && echo "TRAIN_START $(date +%T)"
