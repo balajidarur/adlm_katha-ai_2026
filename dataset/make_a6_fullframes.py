@@ -15,9 +15,9 @@ Writes a6_fullframes_{f150_40k,eval527}.json, dataset_info.json and SHA256SUMS.
 import argparse, hashlib, json, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-mk, sel = {}, {}
+mk, sel = {}, {"__file__": f"{HERE}/select_like_m3.py", "__name__": "select_like_m3"}
 exec(open(f"{HERE}/mk150.py").read().split("d = json.load")[0], mk)
-exec(open(f"{HERE}/select_like_m3.py").read().split('if __name__ == "__main__":')[0], sel)
+exec(open(f"{HERE}/select_like_m3.py").read().split('\nif __name__ == "__main__":')[0], sel)
 DD = re.compile(r"^\d+:\d\d\.\d  ")
 INTRO_C = ("You are given the visual events of a film clip, each with its start time, frames sampled from it at one frame "
            "per second, and every line of dialogue in it.")
