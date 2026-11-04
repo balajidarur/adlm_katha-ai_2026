@@ -1,0 +1,7 @@
+# 1 s budget grid (5 tokens): desc_init seeds each new token's embedding from the mean of its
+# description's token embeddings. Same wording as the legend in the prompt (dataset/add_bins1s.py).
+"<|budget_0|>": "less than 1 second of silence remains before the next line of dialogue"
+"<|budget_1|>": "between 1 and 2 seconds of silence remain before the next line of dialogue"
+"<|budget_2|>": "between 2 and 3 seconds of silence remain before the next line of dialogue"
+"<|budget_3|>": "between 3 and 4 seconds of silence remain before the next line of dialogue"
+"<|budget_4|>": "more than 4 seconds of silence remain before the next line of dialogue"

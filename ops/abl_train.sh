@@ -6,6 +6,8 @@
 # epoch-2 checkpoints (480 = 1.98 ep, 500 = 2.06 ep) are in S3. Code = commit-checked clone (git bundle from S3);
 # dataset = the locked JSONs in s3 adlm/datasets/cmdad_qwen38_ablations (SHA256SUMS verified). Never writes to /data.
 # Env DSDIR / MODEL_DIR override the S3 dataset dir and model name (e.g. DSDIR=cmdad_qwen35_4b_dd MODEL_DIR=qwen35_4b-dd_bins);
+# EXTRA_ARGS='k=v ...' are appended to the llamafactory-cli call (e.g. new_special_tokens_config=examples/budget_ad/bin_tokens_1s.yaml,
+#   or new_special_tokens_config=null for plain-text budget tags).
 # STOP_AT=<step> stops after that checkpoint is in S3 (default 500 = epoch 2); STOP_AT= runs all 3 epochs.
 NAME=$1; WANT=$2; NG=$3; GA=$4; FROM=${5:-}
 set -x
@@ -86,7 +88,7 @@ fi
 cd $LF && echo "TRAIN_START $(date +%T)"
 llamafactory-cli train examples/budget_ad/qwen38_bins_frames_full.yaml \
   dataset_dir=$D dataset=${NAME}_f150_40k tokenized_path=$W/tokcache/$NAME output_dir=$OUT run_name=qwen38-$NAME \
-  gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) $RESUME \
+  gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) $RESUME ${EXTRA_ARGS:-} \
   > $W/runs/train_$NAME.log 2>&1
 echo "TRAIN_EXIT $? $(date +%T)"
 . $W/creds.env; aws s3 cp --only-show-errors $W/runs/train_$NAME.log $M/train.log

@@ -3,7 +3,7 @@
 # from s3 adlm/tf_rerun, locked eval JSON (SHA256SUMS), frames of the 527 eval clips from s3 adlm/frames.
 #   bash g_dd4b_infer.sh <commit> <step>
 # Env overrides for other runs (e.g. the A2/A3/A4 input ablations): DSDIR (s3 datasets dir), EVAL (eval dataset key),
-# MODEL_DIR (s3 models/cmdad dir), e.g. DSDIR=cmdad_qwen38_ablations EVAL=a3_nodds_eval527 MODEL_DIR=qwen38-dd_a3_nodds.
+# MODEL_DIR (s3 models/cmdad dir), BIN_TOKENS (token yaml; empty = plain-text tags, no special tokens), e.g. DSDIR=cmdad_qwen38_ablations EVAL=a3_nodds_eval527 MODEL_DIR=qwen38-dd_a3_nodds.
 WANT=$1; STEP=$2; EVAL=${EVAL:-dd4b_eval527}; MODEL_DIR=${MODEL_DIR:-qwen35_4b-dd_bins}
 set -x
 export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
@@ -46,7 +46,7 @@ MD5=$(md5sum $LF/src/llamafactory/train/sft/trainer.py | cut -c1-10); echo "TRAI
 cd $LF
 mk(){ { echo "model_name_or_path: Qwen/Qwen3.5-4B"; echo "adapter_name_or_path: $CK"; echo "trust_remote_code: true"
     echo "image_max_pixels: 589824"; echo "image_min_pixels: 1024"; echo "enable_liger_kernel: true"
-    echo "new_special_tokens_config: examples/budget_ad/bin_tokens.yaml"; echo "init_special_tokens: desc_init"
+    [ "${BIN_TOKENS-examples/budget_ad/bin_tokens.yaml}" ] && { echo "new_special_tokens_config: ${BIN_TOKENS-examples/budget_ad/bin_tokens.yaml}"; echo "init_special_tokens: desc_init"; }
     echo "resize_vocab: false"; echo "stage: sft"; echo "do_predict: true"; echo "finetuning_type: lora"; echo "budget_variant: none"
     echo "dataset_dir: $D"; echo "eval_dataset: $EVAL"; echo "template: qwen3_5_nothink"; echo "cutoff_len: 49152"
     echo "overwrite_cache: true"; echo "output_dir: $O/$1"; echo "overwrite_output_dir: true"; echo "report_to: none"
