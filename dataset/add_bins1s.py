@@ -14,7 +14,7 @@ import argparse, json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 g = {"__file__": f"{HERE}/add_bins02.py"}
-exec(open(f"{HERE}/add_bins02.py").read().split('if __name__ == "__main__":')[0], g)
+exec(open(f"{HERE}/add_bins02.py").read().split('\nif __name__ == "__main__":')[0], g)
 
 N = 4
 EDGES = [1.0, 2.0, 3.0, 4.0]
