@@ -23,7 +23,7 @@ a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
 proc = AutoProcessor.from_pretrained(a.model)
 tok = proc.tokenizer
-tok.add_special_tokens({"additional_special_tokens": BIN_TOKENS}, replace_additional_special_tokens=False)
+tok.add_tokens(BIN_TOKENS, special_tokens=True)
 d = json.load(open(a.train))
 img = Image.open(next(r["images"][0] for r in d if r["images"])).convert("RGB")
 grid = proc.image_processor(images=[img], return_tensors="np")["image_grid_thw"][0]

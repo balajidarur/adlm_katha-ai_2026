@@ -26,7 +26,7 @@ import json, sys
 sys.argv = ["x"]
 from transformers import AutoTokenizer
 tok = AutoTokenizer.from_pretrained("$W/models/Qwen3-VL-8B-Instruct")
-tok.add_special_tokens({"additional_special_tokens": [f"<|budget_{i}|>" for i in range(9)]}, replace_additional_special_tokens=False)
+tok.add_tokens([f"<|budget_{i}|>" for i in range(9)], special_tokens=True)
 vis = "<|vision_start|>" + "<|image_pad|>" * 112 + "<|vision_end|>"
 d = json.load(open("$O/q3vl8b_eval591.json"))
 L = sorted(len(tok(r["messages"][0]["content"].replace("<image>", vis) + r["messages"][1]["content"], add_special_tokens=False)["input_ids"]) + 20 for r in d)
