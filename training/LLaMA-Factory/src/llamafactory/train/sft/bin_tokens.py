@@ -36,7 +36,10 @@ def restrict_embedding_grad(model, token_ids):
 
     n = 0
     for name, param in model.named_parameters():
-        if "embed_tokens" not in name or not param.requires_grad:
+        # lm_head too: a model with untied output embeddings (e.g. Qwen3-VL-8B) needs
+        # `additional_target: embed_tokens,lm_head`, and only the new rows may move there as well.
+        # Tied models (Qwen3.5-4B) have no trainable lm_head parameter, so nothing changes for them.
+        if ("embed_tokens" not in name and "lm_head" not in name) or not param.requires_grad:
             continue
 
         mask = torch.zeros(param.size(0), 1, dtype=torch.bool)
