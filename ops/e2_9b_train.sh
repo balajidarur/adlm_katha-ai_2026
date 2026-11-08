@@ -164,7 +164,9 @@ oom = "OutOfMemoryError" in log or "CUDA out of memory" in log
 steps = []
 try:
     for l in open(out + "/trainer_log.jsonl"):
-        r = json.loads(l); h, m, s = r["elapsed_time"].split(":"); steps.append((r["current_steps"], int(h) * 3600 + int(m) * 60 + int(s), r.get("loss")))
+        r = json.loads(l)
+        if "loss" not in r: continue  # final summary line repeats the last step
+        h, m, s = r["elapsed_time"].split(":"); steps.append((r["current_steps"], int(h) * 3600 + int(m) * 60 + int(s), r.get("loss")))
 except FileNotFoundError: pass
 sps = [(b[1] - a[1]) / (b[0] - a[0]) for a, b in zip(steps, steps[1:])]
 res = dict(tag=out.split("/")[-1], rc=int(rc), oom=oom, peak_mib={k: peak[k] for k in sorted(peak)}, steps=steps,
