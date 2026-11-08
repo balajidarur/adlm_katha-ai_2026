@@ -48,8 +48,11 @@ $PY -u build_frame_datasets.py --n-per-split 0 --splits eval --ids $IDS --worker
 IN
 sudo unshare -m bash -c "mount --bind $C /data/cmd_ad && su ubuntu -c 'bash $X/inner.sh'"
 # validation: the same build with T2's Qwen3.8 DDs must give T2's M3-591 rows for these clips
-mkdir -p $X/dense38; aws s3 sync --only-show-errors $S3/qwen_dense_hf/ $X/dense38/ --exclude "*" --include "*/adlm_descriptions.json"
-aws s3 sync --only-show-errors $S3/qwen_dense_t2/ $X/dense38/ --exclude "*" --include "*/adlm_descriptions.json"
+# (qwen_dense_t2 also has superseded YouTube-run DDs of the A clips: the HF ones must win)
+rm -rf $X/dense38 $X/d38t2 $X/d38hf; mkdir -p $X/dense38
+aws s3 sync --only-show-errors $S3/qwen_dense_t2/ $X/d38t2/ --exclude "*" --include "*/adlm_descriptions.json"
+aws s3 sync --only-show-errors $S3/qwen_dense_hf/ $X/d38hf/ --exclude "*" --include "*/adlm_descriptions.json"
+cp -r $X/d38t2/* $X/dense38/; cp -rf $X/d38hf/* $X/dense38/
 for v in XdMuekkeCeU yr-HmSz421c; do mkdir -p $X/dense38/$v/Qwen3.8-27B-FP8; cp $W/dd_q38/qwen_dense_final/$v/Qwen3.8-27B-FP8/adlm_descriptions.json $X/dense38/$v/Qwen3.8-27B-FP8/; done
 sed -e "s#$X/dense/{vid}/Qwen3-VL-8B-Instruct#$X/dense38/{vid}/Qwen3.8-27B-FP8#" -e "s#--out $X/build #--out $X/build38 #" $X/inner.sh > $X/inner38.sh
 sudo unshare -m bash -c "mount --bind $C /data/cmd_ad && su ubuntu -c 'bash $X/inner38.sh'"
@@ -65,7 +68,7 @@ mine = {}
 for rec, mt in zip(json.load(open(f"{D}/cmdad_dds_gapframes_eval.json")), json.load(open(f"{D}/cmdad_dds_gapframes_eval_meta.json"))):
     ab.convert(rec, mt["video_id"], b); mine[mt["video_id"]] = rec
 t2 = {}
-for f in glob.glob("$X/t2_*.json"):
+for f in ("$X/t2_eval43.json", "$X/t2_eval16.json", "$X/t2_eval16hf.json"):   # later files are T2's later rebuilds
     for r in json.load(open(f)): t2[vid(r)] = r
 both = [v for v in mine if v in t2]
 same = [v for v in both if mine[v] == t2[v]]
