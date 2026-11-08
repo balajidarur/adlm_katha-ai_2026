@@ -80,6 +80,11 @@ def extract_frames(video, out_dir, *args, **kwargs):
 
 fl.video_info = video_info          # build_frame_datasets uses this same module object
 fl.extract_frames = extract_frames
+# BUILD_VARIANTS=B builds only the gap-frames variant (the one M3 trains on). Each variant's record depends only on its
+# own frame plan, so B's records are unchanged; it stops a clip from failing because variant C (all frames + the
+# longer dense text) would need resampled frames that only the video can provide.
+if os.environ.get("BUILD_VARIANTS"):
+    fl.VARIANTS = tuple(os.environ["BUILD_VARIANTS"].split(","))
 
 import build_frame_datasets  # noqa: E402
 

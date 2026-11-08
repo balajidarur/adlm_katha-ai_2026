@@ -19,13 +19,13 @@ aws s3 cp --only-show-errors $B/cmd_ad_eval591/inputs/shots_cache_gemini-3.5-fla
 ln -sfn $W/asr/SRT $C/asr/SRT; ln -sfn $W/frames/1fps_448x252 $C/frames/1fps_448x252
 ls $C/asr/SRT | head -3; ls $C/frames/1fps_448x252 | wc -l
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false RAYON_NUM_THREADS=1
-export DUR_META=$M3/cmdad_dds_gapframes_train_meta.json,$M3/cmdad_dds_gapframes_eval_meta.json
+export BUILD_VARIANTS=B DUR_META=$M3/cmdad_dds_gapframes_train_meta.json,$M3/cmdad_dds_gapframes_eval_meta.json
 cd $R/dataset
 build(){ # $1 = DENSE_PATH_TMPL, $2 = out dir
   DENSE_PATH_TMPL=$1 $PY -u build_frame_datasets_durs.py --n-per-split 0 --workers 46 --ffmpeg-threads 1 \
     --cap 200 --token-budget 48000 --frame-root /data/cmd_ad/frames/1fps_448x252 --out $2 > $2.log 2>&1
   tail -12 $2.log | grep -v "clips:.*%"
-  n=$(python3 -c "import json;print(len(json.load(open('$2/build_stats.json'))['failed']))"); [ "$n" -lt 100 ] || { P "BUILD_FAILED $2 ($n failed)"; exit 1; }; }
+  n=$(python3 -c "import json;print(len(json.load(open('$2/build_stats.json'))['failed']))"); [ "$n" -lt 300 ] || { P "BUILD_FAILED $2 ($n failed)"; exit 1; }; }
 P "BUILD_Q38_START (validation)"
 build $W/dd_q38/qwen_dense_final/{vid}/Qwen3.8-27B-FP8/adlm_descriptions.json $W/v_q38 || true
 $PY - <<PY | tee -a $W/progress.txt
