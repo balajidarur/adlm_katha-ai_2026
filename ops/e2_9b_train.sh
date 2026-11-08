@@ -111,9 +111,34 @@ if [ "$MODE" = probe ]; then
   echo "PROBE_START $TAG $(date +%T)"
   llamafactory-cli train examples/budget_ad/qwen38_bins_frames_full.yaml $COMMON \
     tokenized_path=$W/tokcache/$DSN output_dir=$OUT run_name=e2-probe-$TAG report_to=none \
-    disable_shuffling=true max_steps=$MAXS logging_steps=1 save_steps=100000 save_strategy=no overwrite_output_dir=true \
+    disable_shuffling=true max_steps=$MAXS logging_steps=1 save_steps=$MAXS save_only_model=true overwrite_output_dir=true \
     ${EXTRA_ARGS:-} > $OUT/train.log 2>&1
   RC=$?; kill $SMI
+  # did the 9 new rows of embed_tokens AND lm_head move, and nothing else? (lm_head is untied on 9B; liger's fused CE
+  # must read the trainable copy, not the frozen base weight)
+  python - $OUT $MD <<'EOF' 2>&1 | tee $OUT/rowcheck.txt
+import sys, glob, json, torch
+from safetensors import safe_open
+out, md = sys.argv[1], sys.argv[2]
+ad = sorted(glob.glob(out + "/checkpoint-*/adapter_model.safetensors"))
+if not ad: print("ROWCHECK no adapter saved"); sys.exit()
+tok = json.load(open(glob.glob(out + "/checkpoint-*/tokenizer.json")[0]))
+ids = sorted(t["id"] for t in tok["added_tokens"] if t["content"].startswith("<|budget_"))
+idx = json.load(open(md + "/model.safetensors.index.json"))["weight_map"]
+def base(name):
+    with safe_open(md + "/" + idx[name], "pt") as f: return f.get_tensor(name)
+with safe_open(ad[-1], "pt") as f:
+    for k in f.keys():
+        if "embed_tokens" not in k and "lm_head" not in k: continue
+        a = f.get_tensor(k).float()
+        bname = "lm_head.weight" if "lm_head" in k else [n for n in idx if n.endswith("embed_tokens.weight")][0]
+        b = base(bname).float()
+        d = (a - b).abs().sum(1)
+        moved = (d > 0).nonzero().flatten().tolist()
+        print(f"ROWCHECK {k}: rows changed vs base = {len(moved)}; budget ids {ids[:2]}..{ids[-1]} changed: "
+              f"{sum(i in moved for i in ids)}/{len(ids)}; other rows changed: {len([i for i in moved if i not in ids])}")
+EOF
+  rm -rf $OUT/checkpoint-*/*.safetensors
   python3 - $OUT $RC <<'EOF'
 import sys, json, collections, re
 out, rc = sys.argv[1], sys.argv[2]
