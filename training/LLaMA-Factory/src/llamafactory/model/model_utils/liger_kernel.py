@@ -80,6 +80,12 @@ def apply_liger_kernel(
         from liger_kernel.transformers import apply_liger_kernel_to_qwen3_moe as apply_liger_kernel
     elif model_type == "qwen3_next":
         from liger_kernel.transformers import apply_liger_kernel_to_qwen3_next as apply_liger_kernel
+    elif model_type == "qwen3_vl":
+        try:
+            from liger_kernel.transformers import apply_liger_kernel_to_qwen3_vl as apply_liger_kernel
+        except ImportError:
+            logger.warning_rank0("This liger-kernel has no Qwen3-VL patch; training without it.")
+            return
     elif model_type == "qwen3_5":
         from liger_kernel.transformers import apply_liger_kernel_to_qwen3_5 as apply_liger_kernel
     elif model_type == "qwen3_5_moe":
