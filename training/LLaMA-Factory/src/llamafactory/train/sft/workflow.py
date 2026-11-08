@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import TYPE_CHECKING, Optional
 
 from .budget import register_tokens, init_marker_embeddings
@@ -97,7 +98,9 @@ def run_sft(
     data_collator = SFTDataCollatorWith4DAttentionMask(
         template=template,
         model=model if not training_args.predict_with_generate else None,
-        pad_to_multiple_of=8 if training_args.do_train else None,  # for shift short attention
+        # LF_PAD_TO_MULTIPLE_OF=0 (default 8): no right-padding at bs1, so transformers skips the dense [T, T] SDPA mask
+        # (is_causal path; ~6 GiB at 45k tokens). Right-pads are never attended by real tokens and have labels -100.
+        pad_to_multiple_of=(int(os.environ.get("LF_PAD_TO_MULTIPLE_OF", "8")) or None) if training_args.do_train else None,
         label_pad_token_id=IGNORE_INDEX if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id,
         block_diag_attn=model_args.block_diag_attn,
         neat_packing=data_args.neat_packing,

@@ -102,12 +102,16 @@ echo "GPUS $(nvidia-smi -L | wc -l) (want $NG) $(nvidia-smi --query-gpu=name,mem
 DSARG=""; [ "$DSC" != none ] && DSARG="deepspeed=examples/deepspeed/ds_${DSC}_config.json"
 # ROWS_ONLY=1: train only the 9 budget rows of embed_tokens/lm_head (new_token_rows_only delta) instead of full copies
 if [ "${ROWS_ONLY:-0}" = 1 ]; then TOK="additional_target=null new_token_rows_only=true"; else TOK="additional_target=embed_tokens,lm_head"; fi
+# OFFLOAD_GC=1: LF use_unsloth_gc (checkpointed layer inputs kept in CPU RAM; same math). NOPAD=1: no pad-to-8 at bs1,
+# so no dense [T, T] attention mask. Both are memory-only changes (9B at 46k tokens OOMs on a 48 GB L40S without them).
+[ "${OFFLOAD_GC:-0}" = 1 ] && TOK="$TOK use_unsloth_gc=true"
+[ "${NOPAD:-0}" = 1 ] && export LF_PAD_TO_MULTIPLE_OF=0
 COMMON="model_name_or_path=$MD $TOK dataset_dir=$D dataset=$DSN \
   per_device_train_batch_size=$BS gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) $DSARG"
 
 cd $LF
 if [ "$MODE" = probe ]; then
-  TAG=${DSN}_${DSC}_bs${BS}_ga${GA}_n${NG}_rows${ROWS_ONLY:-0}; OUT=$W/probe_runs/$TAG; rm -rf $OUT; mkdir -p $OUT
+  TAG=${DSN}_${DSC}_bs${BS}_ga${GA}_n${NG}_rows${ROWS_ONLY:-0}_gc${OFFLOAD_GC:-0}_np${NOPAD:-0}; OUT=$W/probe_runs/$TAG; rm -rf $OUT; mkdir -p $OUT
   ( while true; do nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits; sleep 1; done ) > $OUT/smi.csv &
   SMI=$!
   echo "PROBE_START $TAG $(date +%T)"
