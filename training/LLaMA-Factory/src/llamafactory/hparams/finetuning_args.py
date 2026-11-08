@@ -467,6 +467,16 @@ class FinetuningArguments(
             )
         },
     )
+    new_token_rows_only: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Train only the rows of the newly added special tokens in embed_tokens (and an untied lm_head) via a "
+                "small delta parametrization, instead of full trainable copies (additional_target). Use with "
+                "additional_target unset; rows are saved as new_token_rows.safetensors in each checkpoint."
+            )
+        },
+    )
     restrict_new_token_grad: bool = field(
         default=True,
         metadata={

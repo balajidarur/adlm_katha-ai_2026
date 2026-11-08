@@ -78,7 +78,7 @@ cd $HOME
 python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for r in json.load(open('$D/$(python3 -c "import json;print(json.load(open('$D/dataset_info.json'))['$DSN']['file_name'])")')) for p in r['images']})))" > $W/vids_$DSN.txt
 mkdir -p $W/frames/1fps_448x252
 cat $W/vids_$DSN.txt | xargs -P 48 -I{} sh -c "[ -d $W/frames/1fps_448x252/{} ] || aws s3 sync --only-show-errors $B/frames/1fps_448x252/{}/ $W/frames/1fps_448x252/{}/"
-sudo mkdir -p /data/cmd_ad/frames && [ -e /data/cmd_ad/frames/1fps_448x252 ] || sudo ln -sfn $W/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252
+sudo mkdir -p "$(readlink -m /data)/cmd_ad/frames" && [ -e /data/cmd_ad/frames/1fps_448x252 ] || sudo ln -sfn $W/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252
 $HOME/adlm/venv/bin/python - <<EOF
 import json, os
 f = json.load(open("$D/dataset_info.json"))["$DSN"]["file_name"]
@@ -100,12 +100,14 @@ echo "GPUS $(nvidia-smi -L | wc -l) (want $NG) $(nvidia-smi --query-gpu=name,mem
 [ "$(nvidia-smi -L | wc -l)" = "$NG" ] || { echo GPU_COUNT_MISMATCH; exit 1; }
 
 DSARG=""; [ "$DSC" != none ] && DSARG="deepspeed=examples/deepspeed/ds_${DSC}_config.json"
-COMMON="model_name_or_path=$MD additional_target=embed_tokens,lm_head dataset_dir=$D dataset=$DSN \
+# ROWS_ONLY=1: train only the 9 budget rows of embed_tokens/lm_head (new_token_rows_only delta) instead of full copies
+if [ "${ROWS_ONLY:-0}" = 1 ]; then TOK="additional_target=null new_token_rows_only=true"; else TOK="additional_target=embed_tokens,lm_head"; fi
+COMMON="model_name_or_path=$MD $TOK dataset_dir=$D dataset=$DSN \
   per_device_train_batch_size=$BS gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) $DSARG"
 
 cd $LF
 if [ "$MODE" = probe ]; then
-  TAG=${DSN}_${DSC}_bs${BS}_ga${GA}_n${NG}; OUT=$W/probe_runs/$TAG; rm -rf $OUT; mkdir -p $OUT
+  TAG=${DSN}_${DSC}_bs${BS}_ga${GA}_n${NG}_rows${ROWS_ONLY:-0}; OUT=$W/probe_runs/$TAG; rm -rf $OUT; mkdir -p $OUT
   ( while true; do nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits; sleep 1; done ) > $OUT/smi.csv &
   SMI=$!
   echo "PROBE_START $TAG $(date +%T)"
@@ -120,6 +122,13 @@ if [ "$MODE" = probe ]; then
 import sys, glob, json, torch
 from safetensors import safe_open
 out, md = sys.argv[1], sys.argv[2]
+rf = sorted(glob.glob(out + "/checkpoint-*/new_token_rows.safetensors"))
+if rf:
+    with safe_open(rf[-1], "pt") as f:
+        for k in f.keys():
+            if k.endswith(".delta"):
+                d = f.get_tensor(k).float(); print(f"ROWCHECK rows-only {k}: shape {tuple(d.shape)}, rows moved {(d.abs().sum(1) > 0).sum().item()}/{d.shape[0]}, |delta| mean {d.abs().mean():.3e}")
+    sys.exit()
 ad = sorted(glob.glob(out + "/checkpoint-*/adapter_model.safetensors"))
 if not ad: print("ROWCHECK no adapter saved"); sys.exit()
 tok = json.load(open(glob.glob(out + "/checkpoint-*/tokenizer.json")[0]))

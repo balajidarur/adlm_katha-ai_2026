@@ -118,3 +118,134 @@ class WeightedCE:
             "pct_bin": round(100.0 * n_bin / max(n_bin + n_oth, 1), 2),
         }
         return loss.to(hidden.dtype)
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# new_token_rows_only: train ONLY the new rows, without copying the embedding matrices.
+#
+# `additional_target: embed_tokens[,lm_head]` makes PEFT keep a full trainable copy of each matrix (248k x hidden) with
+# its own gradient and Adam state, although restrict_embedding_grad lets only the 9 new rows move. For untied-output
+# models (Qwen3.5-9B, Qwen3-VL-8B) that is ~2B extra trainable params (~16 GB/GPU) and the run no longer fits a 48 GB
+# GPU. Here the frozen base matrices get a parametrization W' = W.index_add(ids, delta) with a trainable
+# delta of shape (n_new, hidden), zero-initialised, so the forward/gradients for those rows are the same as with the
+# masked full copy (weight decay is 0), and every reader of `.weight` (incl. liger's fused linear CE) sees W'.
+# The rows are saved next to each checkpoint as new_token_rows.safetensors (ids, delta and final rows per matrix) and
+# re-applied in place at inference (load_new_token_rows) and on resume (delta restored).
+# --------------------------------------------------------------------------------------------------------------------
+import os
+from torch import nn
+from torch.nn.utils import parametrize
+
+NEW_ROWS_FILE = "new_token_rows.safetensors"
+
+
+class _RowDelta(nn.Module):
+    def __init__(self, ids, hidden, dtype, device):
+        super().__init__()
+        self.register_buffer("ids", torch.as_tensor(ids, dtype=torch.long, device=device), persistent=False)
+        self.delta = nn.Parameter(torch.zeros(len(ids), hidden, dtype=dtype, device=device))
+
+    def forward(self, w):
+        return w.index_add(0, self.ids, self.delta.to(w.dtype))
+
+
+def _base_param(mod):
+    return mod.parametrizations.weight.original if parametrize.is_parametrized(mod, "weight") else mod.weight
+
+
+def _tied(model):
+    lm = model.get_output_embeddings()
+    return lm is not None and _base_param(lm) is _base_param(model.get_input_embeddings())
+
+
+def _row_targets(model):
+    """(name, module) for the input embeddings and, if untied, the output embeddings."""
+    out = [("embed_tokens", model.get_input_embeddings())]
+    lm = model.get_output_embeddings()
+    if lm is not None and not _tied(model):
+        out.append(("lm_head", lm))
+    return out
+
+
+def attach_new_token_rows(model, token_ids):
+    """Freeze the base matrices and attach a trainable (n_new x hidden) delta to each. Returns #params."""
+    n = 0
+    tied = _tied(model)
+    for name, mod in _row_targets(model):
+        w = mod.weight
+        w.requires_grad_(False)
+        rd = _RowDelta(token_ids, w.size(1), w.dtype, w.device)
+        parametrize.register_parametrization(mod, "weight", rd, unsafe=True)
+        if tied:  # the output layer shares the matrix -> it must see the same delta
+            parametrize.register_parametrization(model.get_output_embeddings(), "weight", rd, unsafe=True)
+        rd.delta.requires_grad_(True)
+        n += rd.delta.numel()
+        logger.info_rank0(f"new_token_rows_only: {name} frozen{' (tied lm_head shares it)' if tied else ''}, "
+                          f"trainable delta {tuple(rd.delta.shape)} on rows {token_ids}")
+    return n
+
+
+def _deltas(model):
+    return {name: mod.parametrizations.weight[0] for name, mod in _row_targets(model)
+            if parametrize.is_parametrized(mod, "weight")}
+
+
+def save_new_token_rows(model, output_dir):
+    from safetensors.torch import save_file
+    t = {}
+    for name, rd in _deltas(model).items():
+        t[f"{name}.ids"] = rd.ids.cpu()
+        t[f"{name}.delta"] = rd.delta.detach().float().cpu().contiguous()
+        base = _base_param(model.get_input_embeddings() if name == "embed_tokens" else model.get_output_embeddings())
+        t[f"{name}.rows"] = (base[rd.ids].float() + rd.delta.detach().float()).cpu().contiguous()
+    if t:
+        os.makedirs(output_dir, exist_ok=True)
+        save_file(t, os.path.join(output_dir, NEW_ROWS_FILE))
+
+
+def restore_new_token_rows(model, ckpt_dir):
+    """Resume: load the saved deltas into the attached parametrizations."""
+    from safetensors.torch import load_file
+    f = os.path.join(ckpt_dir, NEW_ROWS_FILE)
+    if not os.path.isfile(f):
+        raise FileNotFoundError(f"resume with new_token_rows_only but {f} is missing")
+    t = load_file(f)
+    for name, rd in _deltas(model).items():
+        assert torch.equal(t[f"{name}.ids"], rd.ids.cpu()), f"{name}: token ids differ from checkpoint"
+        with torch.no_grad():
+            rd.delta.copy_(t[f"{name}.delta"].to(rd.delta.dtype))
+        logger.info_rank0(f"new_token_rows_only: restored {name} delta from {f}")
+
+
+def load_new_token_rows(model, adapter_dir):
+    """Inference: write the trained rows into the (plain) base matrices in place. Returns True if a file was found."""
+    from safetensors.torch import load_file
+    f = os.path.join(adapter_dir, NEW_ROWS_FILE)
+    if not os.path.isfile(f):
+        return False
+    t = load_file(f)
+    tgt = dict(_row_targets(model))
+    for name in ("embed_tokens", "lm_head"):
+        if f"{name}.rows" not in t:
+            continue
+        mod = tgt.get(name)
+        assert mod is not None, f"checkpoint has {name} rows but the model's {name} is tied/missing"
+        with torch.no_grad():
+            mod.weight[t[f"{name}.ids"].to(mod.weight.device)] = t[f"{name}.rows"].to(mod.weight.dtype).to(mod.weight.device)
+        logger.info_rank0(f"new_token_rows_only: loaded {t[f'{name}.ids'].numel()} {name} rows from {f}")
+    return True
+
+
+def new_token_rows_callback():
+    from transformers import TrainerCallback
+
+    class _SaveRows(TrainerCallback):
+        def on_save(self, args, state, control, model=None, **kw):
+            if state.is_world_process_zero and model is not None:
+                save_new_token_rows(model, os.path.join(args.output_dir, f"checkpoint-{state.global_step}"))
+
+        def on_train_end(self, args, state, control, model=None, **kw):
+            if state.is_world_process_zero and model is not None:
+                save_new_token_rows(model, args.output_dir)
+
+    return _SaveRows()

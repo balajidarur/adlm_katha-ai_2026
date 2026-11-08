@@ -18,7 +18,8 @@
 from typing import TYPE_CHECKING, Optional
 
 from .budget import register_tokens, init_marker_embeddings
-from .bin_tokens import resolve_new_token_ids, restrict_embedding_grad
+from .bin_tokens import (resolve_new_token_ids, restrict_embedding_grad, attach_new_token_rows,
+                         restore_new_token_rows, load_new_token_rows, new_token_rows_callback)
 from ...data import SFTDataCollatorWith4DAttentionMask, get_dataset, get_template_and_fix_tokenizer
 from ...extras.constants import IGNORE_INDEX
 from ...extras.logging import get_logger
@@ -59,6 +60,9 @@ def run_sft(
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
     dataset_module = get_dataset(template, model_args, data_args, training_args, stage="sft", **tokenizer_module)
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
+    if not training_args.do_train and model_args.adapter_name_or_path:
+        if load_new_token_rows(model, model_args.adapter_name_or_path[-1]):
+            logger.info_rank0("new_token_rows_only checkpoint: budget rows written into embed_tokens/lm_head")
     if finetuning_args.budget_variant != "none":
         ok = init_marker_embeddings(model, tokenizer, finetuning_args.budget_variant)
         logger.info_rank0(f"budget: marker embeddings seeded in place: {ok}")
@@ -68,7 +72,13 @@ def run_sft(
     if model_args.add_special_tokens:
         ids = resolve_new_token_ids(tokenizer, model_args.add_special_tokens)
         finetuning_args._special_token_ids = ids       # read by the weighted-CE path
-        if training_args.do_train and finetuning_args.restrict_new_token_grad:
+        if training_args.do_train and finetuning_args.new_token_rows_only:
+            n = attach_new_token_rows(model, ids)
+            logger.info_rank0(f"new_token_rows_only: {n:,} trainable row params (embed/lm_head stay frozen)")
+            if training_args.resume_from_checkpoint:
+                restore_new_token_rows(model, training_args.resume_from_checkpoint)
+            callbacks = list(callbacks or []) + [new_token_rows_callback()]
+        elif training_args.do_train and finetuning_args.restrict_new_token_grad:
             n = restrict_embedding_grad(model, ids)
             logger.info_rank0(f"new-token grad mask: {len(ids)} rows, {n} parameter(s) hooked")
         if finetuning_args.special_token_loss_weight != 1.0:
