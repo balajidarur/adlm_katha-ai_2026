@@ -163,18 +163,27 @@ EOF
 fi
 
 # train
-OUT=$W/runs/qwen3vl8b-dd_budget
+# SAVE_STEPS (default 47 = a quarter of the 188-step epoch); every checkpoint is full (adapter, new_token_rows, optimizer,
+# scheduler, rng, trainer_state), none rotated away; each is synced to S3 only when complete and its S3 size is verified.
+OUT=$W/runs/qwen3vl8b-dd_budget; SV=${SAVE_STEPS:-47}
 RESUME=""
 if [ -n "$ARG7" ]; then
   aws s3 cp --only-show-errors --recursive $M/checkpoint-$ARG7/ $OUT/checkpoint-$ARG7/
   echo "RESUME_FROM checkpoint-$ARG7 ($(ls $OUT/checkpoint-$ARG7 | wc -l) files)"
-  for n in $(seq 20 20 $ARG7); do touch $W/synced_checkpoint-$n; done
+  for n in $(seq $SV $SV $ARG7); do touch $W/synced_checkpoint-$n; done
   RESUME="resume_from_checkpoint=$OUT/checkpoint-$ARG7"
 fi
+complete(){ local c=$1; for f in trainer_state.json optimizer.pt scheduler.pt adapter_model.safetensors; do [ -s $c/$f ] || return 1; done
+  [ "$(ls $c/rng_state*.pth 2>/dev/null | wc -l)" = "$NG" ] || return 1
+  [ "${ROWS_ONLY:-0}" = 1 ] && { [ -s $c/new_token_rows.safetensors ] || return 1; }; return 0; }
 ( while true; do . $W/creds.env
-    for c in $OUT/checkpoint-*; do [ -f $c/trainer_state.json ] || continue; n=$(basename $c)
-      [ -f $W/synced_$n ] && continue
-      sleep 30; aws s3 sync --only-show-errors $c $M/$n/ && touch $W/synced_$n && echo "$(date +%T) SYNCED $n $(du -sb $c | cut -f1)" >> $W/ckpt_sync.log
+    for c in $OUT/checkpoint-*; do n=$(basename $c); [ -f $W/synced_$n ] && continue
+      complete $c || continue; sleep 30
+      aws s3 sync --only-show-errors $c $M/$n/ || continue
+      L=$(find $c -type f -printf "%s\n" | awk '{s+=$1} END {print s}')
+      R=$(aws s3 ls --recursive $M/$n/ | awk '{s+=$3} END {print s}')
+      if [ "$L" = "$R" ]; then touch $W/synced_$n; echo "$(date +%T) SYNCED+VERIFIED $n $L bytes $(ls $c | wc -l) files" >> $W/ckpt_sync.log
+      else echo "$(date +%T) SIZE_MISMATCH $n local $L s3 $R (retry)" >> $W/ckpt_sync.log; fi
     done
     aws s3 cp --only-show-errors $OUT/trainer_log.jsonl $M/trainer_log.jsonl 2>/dev/null
     aws s3 cp --only-show-errors $W/runs/train.log $M/train.log 2>/dev/null
@@ -183,7 +192,7 @@ fi
   echo "$(date +%T) STOP_AT_$STOP_AT" >> $W/ckpt_sync.log; pkill -f "q3vl8b_bins_frames_full[.]yaml" ) &
 echo "TRAIN_START $(date +%T)"
 llamafactory-cli train $CFG $COMMON \
-  tokenized_path=$W/tokcache/q3vl8b output_dir=$OUT run_name=qwen3vl8b-dd_budget save_total_limit=40 $RESUME ${EXTRA_ARGS:-} \
+  tokenized_path=$W/tokcache/q3vl8b output_dir=$OUT run_name=qwen3vl8b-dd_budget save_steps=$SV save_total_limit=null save_only_model=false $RESUME ${EXTRA_ARGS:-} \
   > $W/runs/train.log 2>&1
 echo "TRAIN_EXIT $? $(date +%T)"
 . $W/creds.env; aws s3 cp --only-show-errors $W/runs/train.log $M/train.log
