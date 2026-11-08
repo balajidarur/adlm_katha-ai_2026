@@ -17,12 +17,21 @@ aws s3 sync --only-show-errors $S3/build_inputs/ $X/bin/
 aws s3 cp --only-show-errors $S3/inputs_hf/shots_cache_gemini-3.5-flash-lite.json $X/shots.json
 aws s3 sync --only-show-errors $S3/q3vl8b_dense_e3/ $X/dense/ --exclude "*" --include "*/adlm_descriptions.json"
 for v in XdMuekkeCeU yr-HmSz421c; do mkdir -p $X/dense/$v/Qwen3-VL-8B-Instruct; cp $W/dd_q3vl/$v/Qwen3-VL-8B-Instruct/adlm_descriptions.json $X/dense/$v/Qwen3-VL-8B-Instruct/; done
+rm -rf $X/build $X/build38
 IDS="$(cd $X/dense && ls -d */ | tr -d / | tr "\n" " ")"; echo "IDS ($(echo $IDS | wc -w)): $IDS"
 # frames: T2's pools for these clips (same frames as the M3-591 rows); anything new is extracted from the video
 for v in $IDS; do
   aws s3 sync --only-show-errors $S3/frames_hf_1fps_448x252/$v/ $X/frames/$v/
   aws s3 sync --only-show-errors $S3/frames_1fps_448x252/$v/ $X/frames/$v/
   [ -d $X/frames/$v ] || aws s3 sync --only-show-errors $B/adlm/frames/1fps_448x252/$v/ $X/frames/$v/
+done
+# the 16 A clips come ONLY from the official HF video: S3 also holds their superseded YouTube-run SRTs / frames
+# (inputs/srt, asr_new, frames_1fps_448x252), which the syncs above may have mixed in -> take asr_hf + frames_hf alone
+aws s3 cp --only-show-errors $S3/inputs/new21.txt $X/new21.txt; head -16 $X/new21.txt > $X/a16.txt
+mkdir -p $X/asr_hf; aws s3 sync --only-show-errors $S3/asr_hf/SRT/ $X/asr_hf/
+for c in $(cat $X/a16.txt); do y=${c%/*}; v=${c#*/}
+  mkdir -p $X/asr/SRT/$y; cp -f $X/asr_hf/$y/$v.srt $X/asr/SRT/$y/$v.srt
+  rm -rf $X/frames/$v $W/frames/1fps_448x252/$v; aws s3 sync --only-show-errors $S3/frames_hf_1fps_448x252/$v/ $X/frames/$v/
 done
 # a private /data/cmd_ad for this build (mount namespace), so training/probes reading /data/cmd_ad are not disturbed
 C=$X/root; rm -rf $C; mkdir -p $C/annotations $C/datasets/data $C/dense $C/asr $C/frames $C/videos
@@ -43,7 +52,7 @@ mkdir -p $X/dense38; aws s3 sync --only-show-errors $S3/qwen_dense_hf/ $X/dense3
 aws s3 sync --only-show-errors $S3/qwen_dense_t2/ $X/dense38/ --exclude "*" --include "*/adlm_descriptions.json"
 for v in XdMuekkeCeU yr-HmSz421c; do mkdir -p $X/dense38/$v/Qwen3.8-27B-FP8; cp $W/dd_q38/qwen_dense_final/$v/Qwen3.8-27B-FP8/adlm_descriptions.json $X/dense38/$v/Qwen3.8-27B-FP8/; done
 sed -e "s#$X/dense/{vid}/Qwen3-VL-8B-Instruct#$X/dense38/{vid}/Qwen3.8-27B-FP8#" -e "s#--out $X/build #--out $X/build38 #" $X/inner.sh > $X/inner38.sh
-cp -r $X/frames $X/frames_before38 2>/dev/null; sudo unshare -m bash -c "mount --bind $C /data/cmd_ad && su ubuntu -c 'bash $X/inner38.sh'"
+sudo unshare -m bash -c "mount --bind $C /data/cmd_ad && su ubuntu -c 'bash $X/inner38.sh'"
 for f in eval16.json eval16hf.json eval43.json; do aws s3 cp --only-show-errors $S3/eval_rows/$f $X/t2_$f 2>/dev/null || aws s3 cp --only-show-errors $S3/build_hf/$f $X/t2_$f 2>/dev/null; done
 cd $R/dataset
 $PY - <<PY | tee -a $W/progress.txt
