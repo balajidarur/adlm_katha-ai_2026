@@ -3,9 +3,9 @@
 WANT=$1; set -x
 W=/opt/dlami/nvme/e3; cd $W; . $W/cr.env; B=s3://balu-transfer-933516006154-apne1
 P(){ echo "$(date -u +%H:%M) $*" | tee -a $W/progress.txt; }
-R=$W/adlm_repo; PY=$HOME/adlm/venv/bin/python
+R=${E3_REPO:-$W/adlm_repo}; PY=$HOME/adlm/venv/bin/python
 HAVE=$(git -C $R rev-parse --short HEAD); [ "$HAVE" = "$WANT" ] || { P COMMIT_MISMATCH; exit 1; }
-bash $R/ops/e3_build_extra.sh $WANT > $W/e3_build_extra.log 2>&1 || { P EXTRA_FAILED; exit 1; }
+[ -f $W/extra/build/extra_eval.json ] || { bash $R/ops/e3_build_extra.sh $WANT > $W/e3_build_extra.log 2>&1 || { P EXTRA_FAILED; exit 1; }; }
 O=$W/ds; rm -rf $O
 cd $R/dataset && $PY -u select_e3.py --name q3vl8b --v $W/v_q3vl --m3 $W/m3/frame_variants_448x252_full_qwen38 \
   --eval527 $W/ref/data/cmd_ad/datasets/frame_variants_448x252_full_qwen38/eval527.json --eval-ids $W/eval_ids.txt \

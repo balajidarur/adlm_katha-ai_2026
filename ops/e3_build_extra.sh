@@ -6,7 +6,7 @@
 WANT=$1; set -x
 W=/opt/dlami/nvme/e3; cd $W; . $W/cr.env; B=s3://balu-transfer-933516006154-apne1; S3=$B/cmd_ad_eval591
 P(){ echo "$(date -u +%H:%M) $*" | tee -a $W/progress.txt; }
-R=$W/adlm_repo; PY=$HOME/adlm/venv/bin/python
+R=${E3_REPO:-$W/adlm_repo}; PY=$HOME/adlm/venv/bin/python
 HAVE=$(git -C $R rev-parse --short HEAD); [ "$HAVE" = "$WANT" ] || { P COMMIT_MISMATCH; exit 1; }
 X=$W/extra; mkdir -p $X/in $X/dense $X/asr/SRT $X/frames
 aws s3 sync --only-show-errors $S3/inputs/videos/ $X/in/videos/
