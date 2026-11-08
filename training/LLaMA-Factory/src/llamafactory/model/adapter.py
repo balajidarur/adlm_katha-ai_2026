@@ -377,4 +377,18 @@ def init_adapter(
     else:
         raise NotImplementedError(f"Unknown finetuning type: {finetuning_args.finetuning_type}.")
 
+    # ZeRO-3 flattens each parameter group into one buffer and asserts a single dtype. LoRA weights come out of PEFT
+    # in fp32 while modules_to_save copies (embed_tokens / lm_head for the budget tokens) keep the model's bf16, so a
+    # LoRA + additional_target run cannot start. Bring every trainable parameter to the compute dtype; DeepSpeed's
+    # bf16 optimizer keeps the fp32 master copy. Only runs that would otherwise crash are affected.
+    if is_trainable and is_deepspeed_zero3_enabled() and model_args.compute_dtype is not None:
+        dtypes = {p.dtype for p in model.parameters() if p.requires_grad}
+        if len(dtypes) > 1:
+            n = 0
+            for p in model.parameters():
+                if p.requires_grad and p.dtype != model_args.compute_dtype:
+                    p.data = p.data.to(model_args.compute_dtype)
+                    n += 1
+            logger.info_rank0(f"ZeRO-3: {n} trainable tensors cast to {model_args.compute_dtype} (were {dtypes}).")
+
     return model
