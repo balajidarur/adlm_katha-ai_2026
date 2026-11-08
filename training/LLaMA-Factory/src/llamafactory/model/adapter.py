@@ -243,7 +243,9 @@ def _setup_lora_tuning(
         ):
             raise ValueError("DoRA is not compatible with PTQ-quantized models.")
 
-        if model_args.resize_vocab and finetuning_args.additional_target is None:
+        # new_token_rows_only trains the new rows as a delta on the frozen matrices: no full copies of them
+        if (model_args.resize_vocab and finetuning_args.additional_target is None
+                and not getattr(finetuning_args, "new_token_rows_only", False)):
             input_embeddings = model.get_input_embeddings()
             output_embeddings = model.get_output_embeddings()
             module_names = set()
