@@ -17,7 +17,7 @@ aws s3 sync --only-show-errors $S3/build_inputs/ $X/bin/
 aws s3 cp --only-show-errors $S3/inputs_hf/shots_cache_gemini-3.5-flash-lite.json $X/shots.json
 aws s3 sync --only-show-errors $S3/q3vl8b_dense_e3/ $X/dense/ --exclude "*" --include "*/adlm_descriptions.json"
 for v in XdMuekkeCeU yr-HmSz421c; do mkdir -p $X/dense/$v/Qwen3-VL-8B-Instruct; cp $W/dd_q3vl/$v/Qwen3-VL-8B-Instruct/adlm_descriptions.json $X/dense/$v/Qwen3-VL-8B-Instruct/; done
-IDS="$(cd $X/dense && ls -d */ | tr -d /)"; echo "IDS ($(echo $IDS | wc -w)): $IDS"
+IDS="$(cd $X/dense && ls -d */ | tr -d / | tr "\n" " ")"; echo "IDS ($(echo $IDS | wc -w)): $IDS"
 # frames: T2's pools for these clips (same frames as the M3-591 rows); anything new is extracted from the video
 for v in $IDS; do
   aws s3 sync --only-show-errors $S3/frames_hf_1fps_448x252/$v/ $X/frames/$v/
