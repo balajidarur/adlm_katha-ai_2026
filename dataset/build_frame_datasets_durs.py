@@ -14,6 +14,9 @@ Validate by rebuilding with the reference dense descriptions and comparing recor
 Qwen3.8 build of frame_variants_448x252_full_qwen38). A clip that would need frames not in the pool fails
 ("No such file" from ffmpeg) and is listed in build_stats.json.
 
+Clips whose video is present (e.g. fetched because the new descriptions need new resampled frames) use the
+builder's own video_info / ffmpeg extraction unchanged.
+
   DUR_META=a_meta.json,b_meta.json DENSE_PATH_TMPL=... python build_frame_datasets_durs.py <builder args>
 """
 import json
@@ -57,7 +60,12 @@ def exact_dur(vid, d0, frame_root="/data/cmd_ad/frames/1fps_448x252"):
 _EXACT = {}
 
 
+_video_info = fl.video_info
+
+
 def video_info(path):
+    if os.path.exists(path):                 # the video is here after all: the builder's own reading
+        return _video_info(path)
     vid = os.path.basename(path).rsplit(".", 1)[0]
     d = DUR.get(vid)
     if d is None:
