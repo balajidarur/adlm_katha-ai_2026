@@ -15,6 +15,12 @@ if [ "$(git -C $R rev-parse --short HEAD 2>/dev/null)" != "$WANT" ]; then
   rm -rf $R && git clone -q -b qwen38-dense-dataset-training $W/adlm_eval.bundle $R
 fi
 HAVE=$(git -C $R rev-parse --short HEAD); echo "COMMIT $HAVE (want $WANT)"; [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH; exit 1; }
+# fresh instance disk: base model, and the eval clips' frames (shared pool + the frames E3's builds added)
+sudo touch /etc/gpu-idle-shutdown.disable
+aws configure set default.s3.max_concurrent_requests 64; aws configure set default.s3.multipart_chunksize 64MB
+[ -f $MD/model-00004-of-00004.safetensors ] || aws s3 sync --only-show-errors $B/models/Qwen3-VL-8B-Instruct/ $MD/
+mkdir -p $W/frames/1fps_448x252
+sudo mkdir -p /data/cmd_ad/frames; [ "$(readlink /data/cmd_ad/frames/1fps_448x252)" = $W/frames/1fps_448x252 ] || { sudo rm -f /data/cmd_ad/frames/1fps_448x252; sudo ln -sfn $W/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252; }
 [ -d $CK ] || aws s3 cp --only-show-errors --recursive $B/adlm/models/cmdad/qwen3vl8b-dd_budget/checkpoint-$STEP/ $CK/ \
   --exclude "optimizer.pt" --exclude "rng_state*" --exclude "scheduler.pt"
 ls $CK/adapter_model.safetensors $CK/new_token_rows.safetensors || { echo CKPT_INCOMPLETE; exit 1; }
@@ -22,6 +28,11 @@ mkdir -p $D $O
 DS=$B/cmd_ad_dense/datasets/cmdad_q3vl8b_dd
 for f in SHA256SUMS q3vl8b_eval591.json q3vl8b_f150_40k.json; do [ -f $D/$f ] || aws s3 cp --only-show-errors $DS/$f $D/; done
 (cd $D && grep -E "q3vl8b_eval591.json|q3vl8b_f150_40k.json" SHA256SUMS | sha256sum -c -) || { echo SHA_MISMATCH; exit 1; }
+if [ ! -f $W/frames/.eval591_ok ]; then
+  python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for f in ['$D/q3vl8b_eval591.json'] for r in json.load(open(f)) for p in r['images']})))" > $D/vids.txt
+  cat $D/vids.txt | xargs -P 48 -I{} aws s3 sync --only-show-errors $B/adlm/frames/1fps_448x252/{}/ $W/frames/1fps_448x252/{}/
+  aws s3 cp --only-show-errors $DS/frames_new_1fps_448x252.tar - | tar -x -C $W/frames && touch $W/frames/.eval591_ok
+fi
 python3 - <<PY
 import json, os
 d = json.load(open("$D/q3vl8b_eval591.json"))
