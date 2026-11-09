@@ -30,9 +30,15 @@ d = json.load(open("$E/eval591_9b.json")); src = json.load(open("$E/frames_src64
 for v in sorted({r["images"][0].split("/")[-2] for r in d}):
     print(v, src.get(v, "adlm/frames/1fps_448x252"))
 EOF
-mkdir -p $W/frames/1fps_448x252
-cat $E/frame_jobs.txt | xargs -P 48 -n 2 sh -c "[ -d $W/frames/1fps_448x252/\$0 ] || aws s3 sync --only-show-errors $B/\$1/\$0/ $W/frames/1fps_448x252/\$0/"
-sudo mkdir -p "$(readlink -m /data)/cmd_ad/frames" && [ -e /data/cmd_ad/frames/1fps_448x252 ] || sudo ln -sfn $W/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252
+# frame root: a real /data/cmd_ad/frames/1fps_448x252 dir (box A) is filled in place; otherwise $W/frames + symlink
+F=$W/frames/1fps_448x252
+[ -d /data/cmd_ad/frames/1fps_448x252 ] && [ ! -L /data/cmd_ad/frames/1fps_448x252 ] && F=/data/cmd_ad/frames/1fps_448x252
+mkdir -p $F; echo "FRAME_ROOT $F"
+cat $E/frame_jobs.txt | xargs -P 48 -n 2 sh -c "[ -d $F/\$0 ] || aws s3 sync --only-show-errors $B/\$1/\$0/ $F/\$0/"
+if [ $F = $W/frames/1fps_448x252 ]; then
+  sudo mkdir -p "$(readlink -m /data)/cmd_ad/frames"; [ -L /data/cmd_ad/frames/1fps_448x252 ] && sudo rm /data/cmd_ad/frames/1fps_448x252
+  sudo ln -sfn $F /data/cmd_ad/frames/1fps_448x252
+fi
 # shards: interleaved; the eval591 indices of each shard are recorded so predictions can be put back in order
 python3 - <<EOF
 import json, os
