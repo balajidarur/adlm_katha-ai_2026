@@ -9,7 +9,7 @@
 # (eval527 + T2's 64 rows, in T2's merged-prediction order). Outputs -> s3 adlm/inference/cmdad/eval591/qwen35_9b-dd_budget_ckpt<N>/
 WANT=$1; CK=$2; MODES=$3; NG=${4:-4}; G0=${GPU0:-0}
 if [ -n "${BOX_SHARD:-}" ]; then K=${BOX_SHARD#*/}; LOCAL="${BOX_SHARD%/*}"; else K=$NG; LOCAL=$(seq 0 $((NG - 1))); fi
-set -x
+# (no set -x: creds are sourced below)
 W=/scratch; [ -d /opt/dlami/nvme ] && W=/opt/dlami/nvme
 . $W/creds.env
 B=s3://balu-transfer-933516006154-apne1; R=$W/adlm_repo; LF=$R/training/LLaMA-Factory; MD=$W/models/Qwen3.5-9B
