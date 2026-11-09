@@ -74,6 +74,6 @@ run(){ echo "$(date +%T) START $1" >> $O/queue.log
 for m in $MODES; do case $m in
   trainchk) mk ${N}_trainchk tf trainchk8; run ${N}_trainchk "";;
   tf) mk ${N}_tf tf q3vl8b_eval591; run ${N}_tf teacher_forced;;
-  free) mk ${N}_free free:2048 q3vl8b_eval591; run ${N}_free free_running_max2048;;
+  free) mk ${N}_free free:2048 q3vl8b_eval591; run ${N}_free ${FREE_SUB:-free_running_max2048};;
 esac; done
 echo "ALL_DONE $N $MODES" >> $O/queue.log
