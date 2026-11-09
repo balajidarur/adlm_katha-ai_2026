@@ -31,6 +31,11 @@ for f in SHA256SUMS q3vl8b_eval591.json q3vl8b_f150_40k.json; do [ -f $D/$f ] ||
 if [ ! -f $W/frames/.eval591_ok ]; then
   python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for f in ['$D/q3vl8b_eval591.json'] for r in json.load(open(f)) for p in r['images']})))" > $D/vids.txt
   cat $D/vids.txt | xargs -P 48 -I{} aws s3 sync --only-show-errors $B/adlm/frames/1fps_448x252/{}/ $W/frames/1fps_448x252/{}/
+  # per source, as T2/E1X: 16 HF clips and the 7 T2 rebuilds have their frames under cmd_ad_eval591/ (S3 mtimes predate
+  # E3's builds, so they are not in frames_new); then E3's newly extracted frames on top
+  F=$W/frames/1fps_448x252; E=$R/ops/e1x
+  for v in $(cat $E/vids_hf.txt); do rm -rf $F/$v; aws s3 sync --only-show-errors $B/cmd_ad_eval591/frames_hf_1fps_448x252/$v/ $F/$v/; done
+  for v in $(cat $E/vids_t2.txt); do rm -rf $F/$v; aws s3 sync --only-show-errors $B/cmd_ad_eval591/frames_1fps_448x252/$v/ $F/$v/; done
   aws s3 cp --only-show-errors $DS/frames_new_1fps_448x252.tar - | tar -x -C $W/frames && touch $W/frames/.eval591_ok
 fi
 python3 - <<PY
