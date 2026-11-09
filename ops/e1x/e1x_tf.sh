@@ -9,7 +9,7 @@ MD5=$(md5sum $LF/src/llamafactory/train/sft/trainer.py | cut -c1-10); echo "TRAI
 export PYTHONPATH=$LF/src PATH=$HOME/adlm/venv/bin:$PATH HF_HOME=$HOME/adlm/hf_cache HF_HUB_OFFLINE=1 \
   HF_DATASETS_CACHE=$W/hf_datasets PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FORCE_TORCHRUN=1
 echo "LF_IMPORT $(python -c 'import llamafactory, os; print(os.path.dirname(llamafactory.__file__))')"
-NAME=e1x_nb480_tf_s${SH}of${NS}; D=$W/e1x/evalds/$NAME; O=$W/e1x/inf/$NAME; CKD=$W/ckpt/qwen38-dd_nobudget_ckpt480; mkdir -p $D; rm -rf $O
+NAME=e1x_nb480_tf_s${SH}of${NS}; D=$W/e1x/evalds/$NAME; O=$W/e1x/inf/$NAME; CKD=$W/ckpt/qwen38-dd_nobudget_ckpt480; mkdir -p $D $W/e1x/inf; rm -rf $O
 python3 - <<PY || { echo PREP_FAIL; exit 1; }
 import json, os
 d = json.load(open("$W/e1x/ds/eval591_nobudget.json")); keep = [i for i in range(len(d)) if i % $NS == $SH]

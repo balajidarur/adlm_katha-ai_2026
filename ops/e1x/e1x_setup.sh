@@ -23,7 +23,7 @@ cat $E/vids591.txt | xargs -P 32 -I{} aws s3 sync --only-show-errors $B/adlm/fra
 F=$W/frames/1fps_448x252
 for v in $(cat $E/vids_hf.txt); do rm -rf $F/$v; aws s3 sync --only-show-errors $B/cmd_ad_eval591/frames_hf_1fps_448x252/$v/ $F/$v/; done
 for v in $(cat $E/vids_t2.txt); do rm -rf $F/$v; aws s3 sync --only-show-errors $B/cmd_ad_eval591/frames_1fps_448x252/$v/ $F/$v/; done
-sudo mkdir -p /data/cmd_ad/frames; [ -e /data/cmd_ad/frames/1fps_448x252 ] && [ ! -L /data/cmd_ad/frames/1fps_448x252 ] && echo "NOTE real /data frames dir exists"
+sudo mkdir -p "$(readlink -m /data/cmd_ad)/frames"; [ -e /data/cmd_ad/frames/1fps_448x252 ] && [ ! -L /data/cmd_ad/frames/1fps_448x252 ] && echo "NOTE real /data frames dir exists"
 [ -L /data/cmd_ad/frames/1fps_448x252 ] && sudo rm /data/cmd_ad/frames/1fps_448x252
 [ -e /data/cmd_ad/frames/1fps_448x252 ] || sudo ln -sfn $F /data/cmd_ad/frames/1fps_448x252
 python3 -c "
