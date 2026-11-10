@@ -41,7 +41,7 @@ dataloader_num_workers: 8
 ### output
 output_dir: /scratch/runs/mtg_ft440
 logging_steps: 5
-save_steps: 9                      # ~quarter epoch (35 steps/epoch at effective batch 8)
+save_steps: 17                     # half epoch (34 steps/epoch: 269 videos, effective batch 8); 3 epochs = step 102
 save_total_limit: null
 plot_loss: true
 overwrite_output_dir: false
