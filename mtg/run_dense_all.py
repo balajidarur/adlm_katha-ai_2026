@@ -26,6 +26,7 @@ ap.add_argument("--ports", type=int, nargs="+", default=[8000])
 ap.add_argument("--per-server", type=int, default=8)
 ap.add_argument("--prompt-variant", default="base")
 ap.add_argument("--no-prop-loc-tags", action="store_true")
+ap.add_argument("--skip-file", default=None, help="clips listed here (re-read before each clip) are skipped: hand work to another box")
 ap.add_argument("--no-cast", action="store_true", help="pass --no-cast --no-circles (MTG / non-film video)")
 args = ap.parse_args()
 
@@ -49,6 +50,8 @@ def worker(port):
             c = q.get_nowait()
         except queue.Empty:
             return
+        if args.skip_file and os.path.exists(args.skip_file) and c in {x.strip() for x in open(args.skip_file)}:
+            continue
         t0 = time.time()
         lp = os.path.join(args.out_root, "_logs", c.replace("/", "_") + ".log")
         with open(lp, "w") as lf:
