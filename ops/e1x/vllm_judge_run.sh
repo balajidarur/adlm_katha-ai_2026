@@ -5,7 +5,9 @@ WANT=$1; J=$2; JOBS=$3; W=/scratch; R=$W/adlm_repo; E=$R/ops/e1x; B=s3://balu-tr
 HAVE=$(git -C $R rev-parse --short HEAD); echo "COMMIT $HAVE (want $WANT)"; [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH; exit 1; }
 [ $J = l2 ] && M=$W/judges/Llama-2-7b-chat-hf || M=$W/judges/Meta-Llama-3-8B-Instruct
 O=$W/e1x/out_vllm; L=$W/e1x/vllm_$J.log; mkdir -p $O
-export HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false
+# VLLM_USE_FLASHINFER_SAMPLER=0: the flashinfer sampler JIT-compiles and needs nvcc (absent on the q boxes);
+# the PyTorch sampler applies top-k then top-p by sorting, like HF.
+export HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false VLLM_USE_FLASHINFER_SAMPLER=0
 $W/vllm/bin/vllm serve $M --dtype float16 --generation-config vllm --port 8000 --max-model-len 4096 --seed 0 \
   --gpu-memory-utilization 0.9 > $W/e1x/server_$J.log 2>&1 < /dev/null &
 SP=$!
