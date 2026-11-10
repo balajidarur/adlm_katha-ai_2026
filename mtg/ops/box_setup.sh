@@ -4,7 +4,9 @@ exec > /scratch_setup.log 2>&1 || exec > $HOME/scratch_setup.log 2>&1
 echo "START $(date -u)"
 sudo touch /etc/gpu-idle-shutdown.disable
 if ! mountpoint -q /scratch; then
-  DEV=$(lsblk -dpno NAME,SIZE,MOUNTPOINT | awk '$2 ~ /T$/ && $3=="" {print $1}' | head -1)
+  # largest unmounted, partition-less nvme disk (instance store)
+  DEV=$(lsblk -dpbno NAME,SIZE,TYPE | awk '$3=="disk"' | sort -k2 -n -r | while read d sz t; do
+          [ -z "$(lsblk -no MOUNTPOINT $d | tr -d '[:space:]')" ] && [ $(lsblk -no NAME $d | wc -l) = 1 ] && { echo $d; break; }; done)
   echo "scratch dev $DEV"
   sudo mkfs.ext4 -q -F $DEV && sudo mkdir -p /scratch && sudo mount $DEV /scratch && sudo chown ubuntu:ubuntu /scratch
 fi
@@ -14,7 +16,7 @@ export AWS_DEFAULT_REGION=ap-northeast-1
 B=s3://balu-transfer-933516006154-apne1
 (aws s3 cp --recursive --only-show-errors $B/models/Qwen3.8-27B-FP8/ /scratch/models/Qwen3.8-27B-FP8/ && echo MODEL_DONE) &
 (mkdir -p /scratch/mtg && aws s3 cp --recursive --only-show-errors $B/mtg/hf_mind-the-gap-inline-ad/ /scratch/mtg/hf/ && \
- aws s3 cp --recursive --only-show-errors $B/mtg/videos_480p/ /scratch/mtg/videos_480p/ && echo DATA_DONE) &
+ { [ -n "$NO_VIDEOS" ] || aws s3 cp --recursive --only-show-errors $B/mtg/videos_480p/ /scratch/mtg/videos_480p/; } && echo DATA_DONE) &
 export PATH=$HOME/.local/bin:$PATH
 which uv || (curl -LsSf https://astral.sh/uv/install.sh | sh)
 export PATH=$HOME/.local/bin:$PATH
