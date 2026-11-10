@@ -6,7 +6,7 @@ B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-
 HAVE=$(git -C $R rev-parse --short HEAD); [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH $HAVE; exit 1; }
 export PYTHONPATH=$LF/src PATH=$HOME/adlm/venv/bin:$PATH HF_HOME=$HOME/adlm/hf_cache HF_HUB_OFFLINE=1 \
   HF_DATASETS_CACHE=$W/hf_datasets_g$GPU PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FORCE_TORCHRUN=1
-NAME=${TAG}_${SPLIT}_s${SH}of${NS}; D=$W/evalds/$NAME; O=$W/inf/$NAME; mkdir -p $D; rm -rf $O
+NAME=${TAG}_${SPLIT}_s${SH}of${NS}; D=$W/evalds/$NAME; O=$W/inf/$NAME; mkdir -p $D $W/inf; rm -rf $O
 python3 - <<PY
 import json
 d = json.load(open("$W/mtg/ds/mtg_bins_f250_$SPLIT.json")); ids = json.load(open("$W/mtg/ds/mtg_bins_f250_${SPLIT}_ids.json"))
