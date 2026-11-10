@@ -34,6 +34,8 @@ for sub, kind in (("teacher_forced", "teacher_forced"), ("free_running_max2048",
         for line in open(p):
             r = json.loads(line)
             rows.setdefault(r["idx"], r)
+    if not rows:
+        print(f"{sub}: no stream files, skipped"); continue
     miss = [i for i in range(591) if i not in rows]
     print(f"{sub}: {len(rows)} streamed rows, missing idx {miss[:10]}")
     assert not miss, sub

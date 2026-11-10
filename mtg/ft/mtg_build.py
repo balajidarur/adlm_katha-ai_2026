@@ -20,7 +20,7 @@ import frames_lib as fl  # noqa: E402
 SPLIT = json.load(open(f"{MTG}/split.json"))
 ANNO = {}
 for f in ("validation", "test"):
-    for l in open(f"{MTG}/hf/data/{f}.jsonl" if os.path.exists(f"{MTG}/hf/data/{f}.jsonl") else f"{MTG}/anno/{f}.jsonl"):
+    for l in open(f"{MTG}/hf/data/annotations/{f}.jsonl"):
         r = json.loads(l); ANNO[r["video_id"]] = r
 TTS = json.load(open(f"{MTG}/gt_tts.json"))
 VIDEO = {}

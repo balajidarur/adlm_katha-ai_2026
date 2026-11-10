@@ -22,7 +22,7 @@ def load_budget_mtg():
     split = json.load(open(f"{MTG}/split.json"))
     out = {}
     for f in ("validation", "test"):
-        for l in open(f"{MTG}/hf/data/{f}.jsonl"):
+        for l in open(f"{MTG}/hf/data/annotations/{f}.jsonl"):
             r = json.loads(l)
             for a in r["gt_ad_segments"]:
                 t = a["text"].strip()

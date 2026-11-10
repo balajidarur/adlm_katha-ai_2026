@@ -10,7 +10,7 @@ if ! mountpoint -q /scratch; then
   echo "scratch dev $DEV"; sudo mkfs.ext4 -q -F $DEV && sudo mkdir -p /scratch && sudo mount $DEV /scratch && sudo chown ubuntu:ubuntu /scratch
 fi
 M=/scratch/mtg; mkdir -p $M/dd
-aws s3 cp --only-show-errors $B/adlm/code/adlm_$WANT.bundle /scratch/ && rm -rf /scratch/adlm_repo && git clone -q /scratch/adlm_$WANT.bundle /scratch/adlm_repo \
+[ -d /scratch/adlm_repo/.git ] && git -C /scratch/adlm_repo fetch -q /scratch/adlm_$WANT.bundle 2>/dev/null; aws s3 cp --only-show-errors $B/adlm/code/adlm_$WANT.bundle /scratch/ && rm -rf /scratch/adlm_repo && git clone -q /scratch/adlm_$WANT.bundle /scratch/adlm_repo \
   && git -C /scratch/adlm_repo checkout -q $WANT; echo "COMMIT $(git -C /scratch/adlm_repo rev-parse --short HEAD)"
 aws s3 cp --only-show-errors $B/mtg/ft/split.json $M/split.json; aws s3 cp --only-show-errors $B/mtg/ft/gt_tts.json $M/gt_tts.json
 (aws s3 cp --recursive --only-show-errors $B/mtg/hf_mind-the-gap-inline-ad/ $M/hf/ && echo HF_DONE) &
