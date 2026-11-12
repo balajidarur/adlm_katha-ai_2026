@@ -1,7 +1,6 @@
 # build_gapexp5.py - TEACHER-FORCED dialogue-gap perturbation, budget vs no-budget (CMD-AD eval). Per clip one dialogue gap of
-# 3-5 s that holds exactly one GT AD (start >= 0.5 s before the next line). Variants: d = 0 plus 4 gap-aware shifts, one per
-# quarter of [lo, dmax]: lo = max(-2, RMIN - (next line - AD start)) keeps >= RMIN = 1.5 s for the AD, dmax = min(2, free room
-# around the two moving lines) >= 1. A shift moves the previous
+# 3-5 s that holds exactly one GT AD (start >= 0.5 s before the next line). Variants: d = 0, two narrowings and two widenings of
+# 1-3 s (gap-aware: narrowing leaves >= RMIN = 1.0 s between AD start and next line, widening <= the free room). A shift moves the previous
 # line by -d/2 and the next line by +d/2 in BOTH the prompt (dialogue section + gap frames re-derived as in gapexp4) and the
 # forced target ([DIALOGUE] lines), and moves the AD start with the previous line (-d/2), so the time from the AD start to the
 # next line changes by exactly d. Teacher forcing then forces every dialogue line and the shifted "M:SS.s [AD] " prefix and the
@@ -10,7 +9,7 @@
 import json, re, random, sys, os
 D = "/storage/datasets/CMD-AD/data/additional_preprocessed_data/gapframe_datasets_qwen38/frame_variants_448x252_full_qwen38/"
 SRC = {"budget": D + "gapframes_bins_eval.json", "nobudget": D + "cmdad_dds_gapframes_eval.json"}
-OUT = sys.argv[1]; NCLIP = int(sys.argv[2]) if len(sys.argv) > 2 else 105; SEED = 5; RMIN = 1.5
+OUT = sys.argv[1]; NCLIP = int(sys.argv[2]) if len(sys.argv) > 2 else 105; SEED = 5; RMIN = 1.0; DMIN, DMAX = 1.0, 3.0
 TS = r"(\d+):(\d+(?:\.\d+)?)"
 def sec(m, s): return int(m) * 60 + float(s)
 def fmt(t): return f"{int(t // 60)}:{t % 60:04.1f}"
@@ -47,9 +46,10 @@ for v, r in recs["budget"].items():
         # widening (d > 0) moves line i earlier and line i+1 later by d/2: cap d by the free room (dialogue or AD) on each side
         before = max([dlg[i - 1][1] if i else 0.0] + [s for s in ads if s < dlg[i][0]])
         after = min([dlg[i + 2][0] if i + 2 < len(dlg) else 1e9] + [s for s in ads if s >= dlg[i + 1][1]])
-        dmax = min(2.0, 2 * (dlg[i][0] - before - 0.1), 2 * (after - dlg[i + 1][1] - 0.1))
-        if dmax < 1.0: continue
-        ok.append((i, inn[0], round(dmax, 2)))
+        dmax = min(DMAX, 2 * (dlg[i][0] - before - 0.1), 2 * (after - dlg[i + 1][1] - 0.1))
+        nmax = min(DMAX, (b - inn[0]) - RMIN)                    # largest narrowing that leaves RMIN s for the AD
+        if dmax < DMIN + 0.2 or nmax < DMIN + 0.2: continue
+        ok.append((i, inn[0], round(dmax, 2), round(nmax, 2)))
     if ok: rng.shuffle(ok); cands.append((v, ok))
 rng.shuffle(cands)
 pick = [(v, ok[0]) for v, ok in cands]                                 # one gap per clip first,
@@ -95,18 +95,17 @@ def variant(r, i, d, s_ad):
     assert sorted(range(len(tt)), key=lambda j: (tt[j][2], j)) == sorted(range(len(tt)), key=lambda j: (tt[j][0], tt[j][2], j)), "target order broken"
     return {"messages": [{"role": "user", "content": nu}, {"role": "assistant", "content": "\n".join(x[1] for x in lines)}], "images": imgs}, nd, new_ad
 out = {k: [] for k in SRC}; man = []
-for v, (i, s_ad, dmax) in pick:
+for v, (i, s_ad, dmax, nmax) in pick:
     _, _, dlg = parse(recs["budget"][v]["messages"][0]["content"]); a, b = dlg[i][1], dlg[i + 1][0]
-    # gap-aware shifts: never leave less than RMIN s between the AD start and the next line, never widen past the free room;
-    # the allowed range [lo, dmax] is cut into 4 equal strata and one shift is drawn in each (so a short gap gets mostly
-    # widening shifts, a long one gets both directions), plus the unshifted original
-    lo = max(-2.0, round(RMIN - (b - s_ad), 2)); st = (dmax - lo) / 4
-    ds = [0.0] + [round(rng.uniform(lo + k * st, lo + (k + 1) * st), 2) for k in range(4)]
+    # gap-aware shifts of 1-3 s: two narrowings drawn from the lower / upper half of [DMIN, nmax] (nmax keeps >= RMIN s between
+    # the AD start and the next line) and two widenings from the halves of [DMIN, dmax] (dmax = free room, <= 3 s), plus d = 0
+    hn, hw = (nmax - DMIN) / 2, (dmax - DMIN) / 2
+    ds = [0.0] + [round(-rng.uniform(DMIN + k * hn, DMIN + (k + 1) * hn), 2) for k in (1, 0)] + [round(rng.uniform(DMIN + k * hw, DMIN + (k + 1) * hw), 2) for k in (0, 1)]
     for n, d in enumerate(ds):
         for k in SRC:
             rec, nd, new_ad = variant(recs[k][v], i, d, s_ad); out[k].append(rec)
         man.append({"row": len(man), "vid": v, "variant": n, "gap_i": i, "shift": d, "orig_gap": [a, b], "new_gap": [nd[i][1], nd[i + 1][0]],
-                    "ad_start": s_ad, "dmax": dmax, "new_ad_start": new_ad, "orig_remaining": round(b - s_ad, 2), "new_remaining": round(nd[i + 1][0] - new_ad, 2)})
+                    "ad_start": s_ad, "dmax": dmax, "nmax": nmax, "new_ad_start": new_ad, "orig_remaining": round(b - s_ad, 2), "new_remaining": round(nd[i + 1][0] - new_ad, 2)})
 os.makedirs(OUT, exist_ok=True)
 for k in SRC: json.dump(out[k], open(f"{OUT}/gapexp5_{k}.json", "w"), ensure_ascii=False)
 json.dump(man, open(f"{OUT}/manifest5.json", "w"), indent=1)
