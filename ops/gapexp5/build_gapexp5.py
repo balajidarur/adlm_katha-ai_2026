@@ -1,6 +1,6 @@
 # build_gapexp5.py - TEACHER-FORCED dialogue-gap perturbation, budget vs no-budget (CMD-AD eval). Per clip one dialogue gap of
 # 3-5 s that holds exactly one GT AD (start >= 0.5 s before the next line). Variants: d = 0, two narrowings and two widenings of
-# 1-3 s (gap-aware: narrowing leaves >= RMIN = 1.0 s between AD start and next line, widening <= the free room). A shift moves the previous
+# 0.5-3 s (gap-aware: narrowing leaves >= RMIN = 1.0 s between AD start and next line, widening <= the free room). A shift moves the previous
 # line by -d/2 and the next line by +d/2 in BOTH the prompt (dialogue section + gap frames re-derived as in gapexp4) and the
 # forced target ([DIALOGUE] lines), and moves the AD start with the previous line (-d/2), so the time from the AD start to the
 # next line changes by exactly d. Teacher forcing then forces every dialogue line and the shifted "M:SS.s [AD] " prefix and the
@@ -9,7 +9,7 @@
 import json, re, random, sys, os
 D = "/storage/datasets/CMD-AD/data/additional_preprocessed_data/gapframe_datasets_qwen38/frame_variants_448x252_full_qwen38/"
 SRC = {"budget": D + "gapframes_bins_eval.json", "nobudget": D + "cmdad_dds_gapframes_eval.json"}
-OUT = sys.argv[1]; NCLIP = int(sys.argv[2]) if len(sys.argv) > 2 else 105; SEED = 5; RMIN = 1.0; DMIN, DMAX = 1.0, 3.0
+OUT = sys.argv[1]; NCLIP = int(sys.argv[2]) if len(sys.argv) > 2 else 105; SEED = 5; RMIN = 1.0; DMIN, DMAX = 0.5, 3.0
 TS = r"(\d+):(\d+(?:\.\d+)?)"
 def sec(m, s): return int(m) * 60 + float(s)
 def fmt(t): return f"{int(t // 60)}:{t % 60:04.1f}"
@@ -97,7 +97,7 @@ def variant(r, i, d, s_ad):
 out = {k: [] for k in SRC}; man = []
 for v, (i, s_ad, dmax, nmax) in pick:
     _, _, dlg = parse(recs["budget"][v]["messages"][0]["content"]); a, b = dlg[i][1], dlg[i + 1][0]
-    # gap-aware shifts of 1-3 s: two narrowings drawn from the lower / upper half of [DMIN, nmax] (nmax keeps >= RMIN s between
+    # gap-aware shifts of 0.5-3 s: two narrowings drawn from the lower / upper half of [DMIN, nmax] (nmax keeps >= RMIN s between
     # the AD start and the next line) and two widenings from the halves of [DMIN, dmax] (dmax = free room, <= 3 s), plus d = 0
     hn, hw = (nmax - DMIN) / 2, (dmax - DMIN) / 2
     ds = [0.0] + [round(-rng.uniform(DMIN + k * hn, DMIN + (k + 1) * hn), 2) for k in (1, 0)] + [round(rng.uniform(DMIN + k * hw, DMIN + (k + 1) * hw), 2) for k in (0, 1)]
