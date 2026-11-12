@@ -18,16 +18,25 @@ echo "DD2B $(find $DD -name adlm_descriptions.json | wc -l) clips"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false RAYON_NUM_THREADS=1 DENSE_PATH_TMPL=$DD/{vid}/Qwen3.5-2B/adlm_descriptions.json
 cd $R/dataset
 
-# 1) main build: the standard index (train + eval), frames from / resampled into box A's pool
-$NICE $P -u build_frame_datasets.py --n-per-split 0 --workers $NW --ffmpeg-threads 1 \
+# 1) main build: the standard index (train + eval), frames from / resampled into box A's pool (skipped when already built)
+[ -s $V/gapframes_bins_eval.json ] || { $NICE $P -u build_frame_datasets.py --n-per-split 0 --workers $NW --ffmpeg-threads 1 \
   --cap 200 --token-budget 48000 --frame-root /data/cmd_ad/frames/1fps_448x252 --out $V 2>&1 | grep -v "it/s\]" | tail -15
 for s in train eval; do
   $NICE $P -u add_bins_to_gapframes.py --src $V/cmdad_dds_gapframes_$s.json --meta $V/cmdad_dds_gapframes_${s}_meta.json --out $V/gapframes_bins_$s.json || { echo BINS_FAILED; exit 1; }
-done
+done; }
 echo MAIN_BUILD_DONE
 
 # 2) the 23 special eval clips in an isolated root
-mkdir -p $SR/annotations $SR/datasets/data $SR/videos $SR/asr/SRT $S/in
+mkdir -p $SR/annotations $SR/datasets/data $SR/videos $SR/asr/SRT $SR/dense $S/in
+# shots cache (read by the builder for the clip list): box A's, updated with the eval591 caches (official-video shots)
+aws s3 cp --only-show-errors $E/inputs/shots_cache_gemini-3.5-flash-lite.json $S/in/shots_b.json
+aws s3 cp --only-show-errors $E/inputs_hf/shots_cache_gemini-3.5-flash-lite.json $S/in/shots_hf.json
+$P - <<PY
+import json
+c = json.load(open("/data/cmd_ad/dense/shots_cache_gemini-3.5-flash-lite.json"))
+for f in ("$S/in/shots_b.json", "$S/in/shots_hf.json"): c.update(json.load(open(f)))
+json.dump(c, open("$SR/dense/shots_cache_gemini-3.5-flash-lite.json", "w")); print("SHOTS", len(c))
+PY
 ln -sfn /data/cmd_ad/annotations/cmd_ad_anno_v1.csv $SR/annotations/cmd_ad_anno_v1.csv
 aws s3 sync --only-show-errors $E/inputs/videos/ $S/in/videos_b/
 aws s3 sync --only-show-errors $E/inputs_hf/videos/ $S/in/videos_hf/
@@ -47,6 +56,7 @@ PY
 IDS=$(python3 -c "import json;print(' '.join(m['video_id'] for m in json.load(open('$SR/datasets/data/ad_interleave_eval_meta.json'))))")
 CMD_AD_ROOT=$SR $NICE $P -u build_frame_datasets.py --n-per-split 0 --splits eval --ids $IDS --workers 8 --ffmpeg-threads 1 \
   --cap 200 --token-budget 48000 --frame-root $S/frames/1fps_448x252 --out $S/build 2>&1 | grep -v "it/s\]" | tail -8
+[ -s $S/build/cmdad_dds_gapframes_eval.json ] || { echo SPECIAL_BUILD_FAILED; exit 1; }
 echo SPECIAL_BUILD_DONE
 
 # 3) assemble train / eval527 / eval591 (150-frame cap), frames needed by eval591 special clips -> s3 frames/eval591_official
