@@ -12,6 +12,10 @@ aws s3 cp --only-show-errors $B/adlm/datasets/cmdad_eval591_9b/SHA256SUMS . && a
 grep eval591_9b.json SHA256SUMS | sha256sum -c - || { echo SHA_MISMATCH; exit 1; }
 python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for r in json.load(open('eval591_9b.json')) for p in r['images']})))" > vids.txt
 cat vids.txt | xargs -P 32 -I{} aws s3 sync --only-show-errors $B/adlm/frames/1fps_448x252/{}/ /scratch/frames/1fps_448x252/{}/
+# 64 of the 591 clips list their frame source in frames_src64.json (some live under cmd_ad_eval591/ instead of adlm/frames)
+aws s3 cp --only-show-errors $B/adlm/datasets/cmdad_eval591_9b/frames_src64.json .
+python3 -c "import json;[print(v, p) for v, p in json.load(open('frames_src64.json')).items() if p != 'adlm/frames/1fps_448x252']" | \
+  while read v p; do aws s3 sync --only-show-errors $B/$p/$v/ /scratch/frames/1fps_448x252/$v/; done
 sudo mkdir -p /data/cmd_ad/frames && sudo ln -sfn /scratch/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252
 python3 -c "import json,os;d=json.load(open('eval591_9b.json'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('CLIPS',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
 aws s3 cp --only-show-errors --recursive $CKS3/ /scratch/ckpt/$TAG/ --exclude "optimizer.pt" --exclude "rng_state*" --exclude "scheduler.pt"
