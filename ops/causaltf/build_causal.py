@@ -15,8 +15,15 @@ as "before" or "after" exactly as the target orders it; ADs that start inside a 
 the dialogue first) keep that line. Also writes the 5 untruncated records (kind "std") for a same-box standard
 TF rerun.
 
-  python build_causal.py <test.json> <out_dir> [n_records=5]
-  -> <out_dir>/causal.json, std.json, meta.json (one meta row per causal record, same order)
+  python build_causal.py <test.json> <out_dir> [n_records=5] [--per-gap]
+  -> <out_dir>/causal.json, std.json, meta.json (one meta row per GT AD)
+
+--per-gap: ADs in the same gap get the identical prompt, and TF is deterministic (an earlier same-gap AD inside a
+later record reproduces its own record's prediction exactly: 140/140 checked on 5 CMD-AD clips), so only the last
+AD of each gap is kept as a record; every AD of that gap is read from it (meta "row" = record index, "pos" = the
+AD's position among the record output's ADs). ADs after the last dialogue line have the full prompt and a prefix
+of the full target, i.e. they ARE standard TF (16/16 + 3/3 identical); they get no record ("row": null) and are
+taken from the same-box standard-TF run.
 """
 import json, re, sys
 
@@ -99,11 +106,24 @@ def build(rec, ridx):
 
 def main():
     src, od = sys.argv[1], sys.argv[2]
-    n = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    args = [a for a in sys.argv[3:] if a != "--per-gap"]; per_gap = "--per-gap" in sys.argv
+    n = int(args[0]) if args else 5
     d = json.load(open(src))[:n]
     recs, meta = [], []
     for i, r in enumerate(d):
         o, m = build(r, i)
+        if per_gap:
+            last = {}
+            for j, x in enumerate(m):
+                last[x["gap_end"]] = j                                   # gap_end identifies the gap within a clip
+            for j, x in enumerate(m):
+                x["pos"] = x["k"]
+                if x["gap_end"] is None:
+                    x["row"] = None
+                else:
+                    x["row"] = len(recs) + sorted(v for g, v in last.items() if g is not None).index(last[x["gap_end"]])
+                    x["label"] = m[last[x["gap_end"]]]["label"]
+            o = [o[j] for j in sorted(v for g, v in last.items() if g is not None)]
         recs += o; meta += m
     json.dump(recs, open(f"{od}/causal.json", "w"), ensure_ascii=False)
     json.dump(d, open(f"{od}/std.json", "w"), ensure_ascii=False)
