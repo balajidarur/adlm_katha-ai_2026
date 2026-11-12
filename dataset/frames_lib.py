@@ -23,7 +23,7 @@ from collections import defaultdict
 
 import numpy as np
 
-ROOT = "/data/cmd_ad"
+ROOT = os.environ.get("CMD_AD_ROOT", "/data/cmd_ad")   # override for isolated builds (e.g. ops/b2b special clips)
 DENSE_MODEL = "gemini-3.5-flash-lite"
 BUILT_DIR = f"{ROOT}/datasets/data"          # the text-only baseline this extends
 ANNO_CSV = f"{ROOT}/annotations/cmd_ad_anno_v1.csv"

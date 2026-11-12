@@ -12,7 +12,7 @@ Nothing is re-extracted and no image is touched.
 """
 import argparse, json, os, re
 
-BUDGET_PARQUET = "/data/cmd_ad/annotations/ad_prefix_durations.parquet"
+BUDGET_PARQUET = os.environ.get("BUDGET_PARQUET", "/data/cmd_ad/annotations/ad_prefix_durations.parquet")
 SPEED_LO, SPEED_HI = 0.67, 1.5
 BIN_EDGES = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 BIN_TOKENS = [f"<|budget_{i}|>" for i in range(9)]
