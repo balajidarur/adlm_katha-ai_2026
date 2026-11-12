@@ -4,6 +4,7 @@
 # s3 adlm/frames into /scratch/frames and the record paths are rewritten there.
 #   bash gx5_box.sh <commit> <s3 ckpt prefix> <tag> <json name> <bins|nobins> ["<gpu ids>", default "0 1 2 3"]
 WANT=$1; CKS3=$2; TAG=$3; JS=$4; TOK=$5; GPUS=${6:-0 1 2 3}; NG=$(echo $GPUS | wc -w); B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1
+export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 exec > $HOME/gx5_$TAG.log 2>&1; echo "START $(date -u)"; . $HOME/.cr.env; sudo touch /etc/gpu-idle-shutdown.disable
 if ! mountpoint -q /scratch; then
   DEV=$(lsblk -dn -o NAME,MODEL | awk '/Instance Storage/{print $1}' | while read d; do lsblk -n -o MOUNTPOINT /dev/$d | grep -q . || echo $d; done | head -1)

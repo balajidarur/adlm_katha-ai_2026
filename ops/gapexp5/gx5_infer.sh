@@ -2,7 +2,7 @@
 # gapexp5 TEACHER-FORCED shard runner (CMD-AD gap-shift records): TF2 settings (budget_teacher_forced, prefill chunk 2048), bs1,
 # cutoff 65536; bin tokens only for the budget model.   bash gx5_infer.sh <commit> <ckpt_dir> <tag> <json> <gpu> <shard> <nshard> <bins|nobins>
 WANT=$1; CKD=$2; TAG=$3; SPLIT=$4; GPU=$5; SH=$6; NS=$7; TOK=$8; W=/scratch; R=$W/adlm_repo; LF=$R/training/LLaMA-Factory
-B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1
+B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1 PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 HAVE=$(git -C $R rev-parse --short HEAD); [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH $HAVE; exit 1; }
 export PYTHONPATH=$LF/src PATH=$HOME/adlm/venv/bin:$PATH HF_HOME=$HOME/adlm/hf_cache HF_HUB_OFFLINE=1 \
   HF_DATASETS_CACHE=$W/hf_datasets_g$GPU PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FORCE_TORCHRUN=1
