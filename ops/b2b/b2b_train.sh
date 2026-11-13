@@ -8,6 +8,10 @@ set -x
 export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 exec > $HOME/b2b_train.log 2>&1
 sudo touch /etc/gpu-idle-shutdown.disable
+if ! mountpoint -q /scratch && [ ! -L /scratch ]; then
+  DEV=$(lsblk -dn -o NAME,MODEL | awk '/Instance Storage/{print $1}' | while read d; do lsblk -n -o MOUNTPOINT /dev/$d | grep -q . || echo $d; done | head -1)
+  sudo mkfs.ext4 -q -F /dev/$DEV && sudo mkdir -p /scratch && sudo mount /dev/$DEV /scratch && sudo chown ubuntu:ubuntu /scratch
+fi
 W=/scratch; mountpoint -q $W || { echo NO_SCRATCH; exit 1; }
 . $HOME/.cr.env; aws configure set default.s3.max_concurrent_requests 64
 B=s3://balu-transfer-933516006154-apne1; M=$B/adlm/models/cmdad/qwen35_2b-dd_bins
