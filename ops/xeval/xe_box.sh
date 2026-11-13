@@ -25,7 +25,8 @@ get_cmd591(){ [ -f /scratch/xe/cmd591.ok ] && return; mkdir -p /scratch/xe && cd
   aws s3 cp --only-show-errors $B/adlm/datasets/cmdad_eval591_9b/frames_src64.json .
   python3 -c "import json;[print(v, p) for v, p in json.load(open('frames_src64.json')).items() if p != 'adlm/frames/1fps_448x252']" | \
     while read v p; do aws s3 sync --only-show-errors $B/$p/$v/ /scratch/frames/1fps_448x252/$v/; done
-  sudo mkdir -p /data/cmd_ad/frames && sudo ln -sfn /scratch/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252
+  # never touch the box's /data (box C keeps its own data there): point the records at /scratch instead
+  sed -i 's#/data/cmd_ad/frames/1fps_448x252/#/scratch/frames/1fps_448x252/#g' eval591_9b.json
   python3 -c "import json,os;d=json.load(open('eval591_9b.json'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('CMD591',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
   touch /scratch/xe/cmd591.ok; }
 get_rftest(){ [ -f /scratch/rf_datasets/frame_variants_448x252/reframed_bins_f150_999k_test.json ] || \
