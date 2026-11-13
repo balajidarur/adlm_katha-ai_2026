@@ -3,7 +3,7 @@
 # base model), fetches each needed eval set, then runs the jobs one after another, each sharded over all GPUs.
 #   bash xe_box.sh <commit> JOB [JOB ...]      JOB = tag,ckpt_s3_prefix,data,bins|nobins,tf|free:N[,k/m]  (k/m: this box takes part k of m, so m boxes share a job)
 #   data: cmd591 (CMD-AD eval591, e1_eval591/eval591.json) | rftest (REFRAMED test 91) | rch (REFRAMED challenge, 620 windows)
-#         | s3:<key under adlm/datasets> (any CMD-AD record json, frames from s3 adlm/frames/1fps_448x252)
+#         | s3:<key under adlm/datasets> (any CMD-AD record json, frames from s3 adlm/frames/1fps_448x252, or per cmdad_eval591_9b/frames_src64.json)
 WANT=$1; shift; B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1 PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 exec >> $HOME/xe.log 2>&1; echo "START $(date -u) jobs: $*"; . $HOME/.cr.env; sudo touch /etc/gpu-idle-shutdown.disable
 if ! mountpoint -q /scratch; then
@@ -43,6 +43,10 @@ get_s3json(){ # $1 = s3 key under adlm/datasets (CMD-AD records with /data/cmd_a
   aws s3 cp --only-show-errors $B/adlm/datasets/$1 $n
   python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for r in json.load(open('$n')) for p in r['images']})))" > vids_$n.txt
   cat vids_$n.txt | xargs -P 32 -I{} aws s3 sync --only-show-errors $B/adlm/frames/1fps_448x252/{}/ /scratch/frames/1fps_448x252/{}/
+  # clips whose frames live elsewhere (the 64 extra eval591 clips): same source map as get_cmd591
+  aws s3 cp --only-show-errors $B/adlm/datasets/cmdad_eval591_9b/frames_src64.json .
+  python3 -c "import json;w=set(open('vids_$n.txt').read().split());[print(v, p) for v, p in json.load(open('frames_src64.json')).items() if v in w and p != 'adlm/frames/1fps_448x252']" | \
+    while read v p; do aws s3 sync --only-show-errors $B/$p/$v/ /scratch/frames/1fps_448x252/$v/; done
   sed -i 's#/data/cmd_ad/frames/1fps_448x252/#/scratch/frames/1fps_448x252/#g' $n
   python3 -c "import json,os;d=json.load(open('$n'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('S3JSON',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
   touch $n.ok; JS=/scratch/xe/$n; }
