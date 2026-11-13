@@ -55,10 +55,13 @@ complete(){ local c=$1; for f in trainer_state.json optimizer.pt scheduler.pt ad
     aws s3 cp --only-show-errors $OUT/trainer_log.jsonl $M/trainer_log.jsonl 2>/dev/null
     aws s3 cp --only-show-errors $HOME/b2b_train.log $M/train.log 2>/dev/null
     sleep 60; done ) &
+DS=dd2b_f150_40k
+# REAL_CAP=N: drop records whose real tokenized length > N (needs the tokenized cache of the full set from an earlier run)
+if [ -n "$REAL_CAP" ]; then $HOME/adlm/venv/bin/python $R/ops/b2b/filter_real_len.py $D dd2b_f150_40k $W/tokcache/dd2b_f150_40k $REAL_CAP dd2b_f150_real${REAL_CAP} || { echo FILTER_FAILED; exit 1; }; DS=dd2b_f150_real${REAL_CAP}; fi
 cd $LF
-echo "TRAIN_START $(date +%T)"
+echo "TRAIN_START $(date +%T) dataset=$DS"
 llamafactory-cli train examples/budget_ad/qwen38_bins_frames_full.yaml \
-  dataset_dir=$D dataset=dd2b_f150_40k tokenized_path=$W/tokcache/dd2b_f150_40k \
+  dataset_dir=$D dataset=$DS tokenized_path=$W/tokcache/$DS \
   output_dir=$OUT run_name=qwen35_2b-dd_bins save_steps=$SV save_total_limit=null save_only_model=false > $W/runs/b2b_train.log 2>&1
 echo "TRAIN_EXIT $? $(date +%T)"
 . $HOME/.cr.env; aws s3 cp --only-show-errors $W/runs/b2b_train.log $M/train_full.log
