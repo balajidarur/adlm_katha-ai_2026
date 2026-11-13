@@ -3,6 +3,7 @@
 # base model), fetches each needed eval set, then runs the jobs one after another, each sharded over all GPUs.
 #   bash xe_box.sh <commit> JOB [JOB ...]      JOB = tag,ckpt_s3_prefix,data,bins|nobins,tf|free:N[,k/m]  (k/m: this box takes part k of m, so m boxes share a job)
 #   data: cmd591 (CMD-AD eval591, e1_eval591/eval591.json) | rftest (REFRAMED test 91) | rch (REFRAMED challenge, 620 windows)
+#         | s3:<key under adlm/datasets> (any CMD-AD record json, frames from s3 adlm/frames/1fps_448x252)
 WANT=$1; shift; B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1 PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 exec >> $HOME/xe.log 2>&1; echo "START $(date -u) jobs: $*"; . $HOME/.cr.env; sudo touch /etc/gpu-idle-shutdown.disable
 if ! mountpoint -q /scratch; then
@@ -37,9 +38,18 @@ get_rch(){ [ -f /scratch/xe/rch.ok ] && return; mkdir -p /scratch/xe; C=$B/refra
   for b in g2 q1 q2; do aws s3 cp --only-show-errors $C/frames_$b.tgz - | pigz -dc | tar x -C / ; done
   python3 -c "import json,os;d=json.load(open('/scratch/rc_ds/reframed_bins_f150_999k_challenge.json'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('RCH',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
   touch /scratch/xe/rch.ok; }
+get_s3json(){ # $1 = s3 key under adlm/datasets (CMD-AD records with /data/cmd_ad/frames/1fps_448x252 paths) -> /scratch/xe/<name>
+  mkdir -p /scratch/xe && cd /scratch/xe; local n=$(basename $1); [ -f $n.ok ] && { JS=/scratch/xe/$n; return; }
+  aws s3 cp --only-show-errors $B/adlm/datasets/$1 $n
+  python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for r in json.load(open('$n')) for p in r['images']})))" > vids_$n.txt
+  cat vids_$n.txt | xargs -P 32 -I{} aws s3 sync --only-show-errors $B/adlm/frames/1fps_448x252/{}/ /scratch/frames/1fps_448x252/{}/
+  sed -i 's#/data/cmd_ad/frames/1fps_448x252/#/scratch/frames/1fps_448x252/#g' $n
+  python3 -c "import json,os;d=json.load(open('$n'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('S3JSON',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
+  touch $n.ok; JS=/scratch/xe/$n; }
 for J in "$@"; do IFS=, read TAG CK DATA TOK MODE PART <<< "$J"; PART=${PART:-0/1}; K=${PART%/*}; M=${PART#*/}
   case $DATA in cmd591) get_cmd591; JS=/scratch/xe/eval591_9b.json;;
     rftest) get_rftest; JS=/scratch/rf_datasets/frame_variants_448x252/reframed_$([ $TOK = bins ] && echo bins || echo nobudget)_f150_999k_test.json;;
+    s3:*) get_s3json ${DATA#s3:};;
     rch) get_rch; JS=/scratch/rc_ds/reframed_$([ $TOK = bins ] && echo bins || echo nobudget)_f150_999k_challenge.json;; esac
   . $HOME/.cr.env; CKD=/scratch/ckpt/$(echo $CK | md5sum | cut -c1-8)
   [ -f $CKD/adapter_model.safetensors ] || aws s3 cp --only-show-errors --recursive $CK/ $CKD/ --exclude "optimizer.pt" --exclude "rng_state*" --exclude "scheduler.pt"

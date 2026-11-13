@@ -1,7 +1,7 @@
 #!/bin/bash
 # xeval shard runner (one GPU): teacher-forced (TF2 settings: budget_teacher_forced, prefill chunk 2048, cutoff 65536) or free-running
 # (greedy, max_new_tokens N, cutoff 49152, as the REFRAMED challenge run). Bin tokens only for budget models.
-#   bash xe_infer.sh <commit> <ckpt_dir> <tag> <json> <gpu> <shard> <nshard> <bins|nobins> <tf|free:N>
+#   bash xe_infer.sh <commit> <ckpt_dir> <tag> <json> <gpu> <shard> <nshard> <bins|bins02|nobins> <tf|free:N>
 # -> s3 adlm/xeval/preds/<tag>_s<shard>of<nshard>/ (predictions jsonl + ids.json + run.yaml + run.log)
 WANT=$1; CKD=$2; TAG=$3; SPLIT=$4; GPU=$5; SH=$6; NS=$7; TOK=$8; MODE=$9; W=/scratch; R=$W/adlm_repo; LF=$R/training/LLaMA-Factory
 B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1 PATH=$HOME/.local/bin:/usr/local/bin:$PATH
@@ -22,6 +22,7 @@ Y=$LF/examples/budget_ad/$NAME.yaml
 { echo "model_name_or_path: Qwen/Qwen3.5-4B"; echo "adapter_name_or_path: $CKD"; echo "trust_remote_code: true"
   echo "image_max_pixels: 589824"; echo "image_min_pixels: 1024"; echo "enable_liger_kernel: true"
   [ "$TOK" = bins ] && { echo "new_special_tokens_config: examples/budget_ad/bin_tokens.yaml"; echo "init_special_tokens: desc_init"; }
+  [ "$TOK" = bins02 ] && { echo "new_special_tokens_config: examples/budget_ad/bin_tokens_02.yaml"; echo "init_special_tokens: desc_init"; }
   echo "resize_vocab: false"; echo "stage: sft"; echo "do_predict: true"; echo "finetuning_type: lora"; echo "budget_variant: none"
   echo "dataset_dir: $D"; echo "eval_dataset: $NAME"; echo "template: qwen3_5_nothink"
   echo "overwrite_cache: true"; echo "output_dir: $O"; echo "overwrite_output_dir: true"; echo "report_to: none"
