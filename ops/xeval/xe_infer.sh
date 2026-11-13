@@ -27,7 +27,7 @@ Y=$LF/examples/budget_ad/$NAME.yaml
   echo "overwrite_cache: true"; echo "output_dir: $O"; echo "overwrite_output_dir: true"; echo "report_to: none"
   echo "per_device_eval_batch_size: 1"; echo "bf16: true"
   case $MODE in tf) echo "cutoff_len: 65536"; echo "budget_teacher_forced: true"; echo "budget_prefill_chunk: 2048";;
-    free:*) echo "cutoff_len: 49152"; echo "predict_with_generate: true"; echo "max_new_tokens: ${MODE#free:}"; echo "do_sample: false"; echo "skip_special_tokens: false";; esac
+    free:*) echo "cutoff_len: ${CUTOFF:-49152}"; echo "predict_with_generate: true"; echo "max_new_tokens: ${MODE#free:}"; echo "do_sample: false"; echo "skip_special_tokens: false";; esac
 } > $Y
 ( cd $LF && CUDA_VISIBLE_DEVICES=$GPU MASTER_PORT=$((29500 + GPU)) llamafactory-cli train $Y > $O.log 2>&1 ); rc=$?
 cp $D/ids.json $O/ 2>/dev/null; cp $Y $O/run.yaml; n=$(cat $O/*_predictions.jsonl 2>/dev/null | wc -l)
