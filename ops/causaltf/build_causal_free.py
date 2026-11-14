@@ -13,7 +13,8 @@ assistant prefix), the label is only carried along.
 
   python build_causal_free.py <records.json> <record_index> <out_dir> [--video-id ID]
   -> <out_dir>/causal_free.json (records, gap order), gaps.json (one row per record: gap span, length, what was visible)
-  python build_causal_free.py <records.json> <first>-<last> <out_dir> --shards K
+  python build_causal_free.py <records.json> <first>-<last> <out_dir> --shards K [--min-gap S]
+  (--min-gap S: only gaps of length >= S seconds get a record; clip end for the last gap = latest visual-event/frame/dialogue time)
   -> <out_dir>/shard_<k>.json (whole clips per shard, clip order kept, gaps in order), meta.json (shard, srow -> clip, gap)
 """
 import json, os, sys
@@ -85,16 +86,22 @@ def main():
     # count (largest first onto the least-loaded shard), each shard's clips in eval order; meta.json maps (shard, row) -> clip/gap
     lo, hi = map(int, idx.split("-"))
     K = int(a[a.index("--shards") + 1]) if "--shards" in a else 1
+    mg = float(a[a.index("--min-gap") + 1]) if "--min-gap" in a else 0.0   # run only gaps with length >= mg (s)
     D = json.load(open(src))
     clips = []
     for i in range(lo, hi + 1):
         out, meta, clip_end = build(D[i])
         v = D[i]["images"][0].split("/")[-2]
+        if mg > 0:                                          # drop short gaps: keep their meta (srow None, skipped "short")
+            keep = [m for m in meta if "row" in m and m["length"] >= mg - 1e-6]
+            out = [out[m["row"]] for m in keep]
+            meta = [dict(m, row=keep.index(m)) if m in keep else ({k: x for k, x in m.items() if k != "row"} |
+                    ({} if "skipped" in m else {"skipped": "short"})) for m in meta]
         clips.append((i, v, out, [dict(m, clip=i, video_id=v, clip_end=clip_end) for m in meta]))
     load, assign = [0] * K, {}
     for i, v, out, meta in sorted(clips, key=lambda c: -len(c[2])):
         k = min(range(K), key=lambda s: (load[s], s)); assign[i] = k; load[k] += len(out)
-    M = {"src": src, "range": [lo, hi], "shards": K, "records_per_shard": load, "rows": []}
+    M = {"src": src, "range": [lo, hi], "shards": K, "min_gap": mg, "records_per_shard": load, "rows": []}
     for k in range(K):
         recs = []
         for i, v, out, meta in clips:
@@ -109,9 +116,9 @@ def main():
         json.dump(recs, open(f"{od}/shard_{k}.json", "w"), ensure_ascii=False)
     json.dump(M, open(f"{od}/meta.json", "w"), ensure_ascii=False)
     run = [m for m in M["rows"] if m["srow"] is not None]
-    print("clips", len(clips), "records", len(run), "nonzero", sum(m["length"] > 0 for m in run),
-          "zero_length", sum(m["length"] == 0 for m in run), "skipped_overlap", len(M["rows"]) - len(run),
-          "last_gaps", sum(m["is_last"] for m in run), "per_shard", load)
+    print("clips", len(clips), "clips_with_records", sum(bool(c[2]) for c in clips), "records", len(run), "nonzero", sum(m["length"] > 0 for m in run),
+          "zero_length", sum(m["length"] == 0 for m in run), "skipped_overlap", sum(m.get("skipped") == "overlap" for m in M["rows"]),
+          "skipped_short", sum(m.get("skipped") == "short" for m in M["rows"]), "last_gaps", sum(m["is_last"] for m in run), "per_shard", load)
 
 
 if __name__ == "__main__":
