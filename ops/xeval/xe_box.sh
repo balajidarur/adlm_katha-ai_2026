@@ -47,7 +47,10 @@ get_s3json(){ # $1 = s3 key under adlm/datasets (CMD-AD records with /data/cmd_a
   aws s3 cp --only-show-errors $B/adlm/datasets/cmdad_eval591_9b/frames_src64.json .
   python3 -c "import json;w=set(open('vids_$n.txt').read().split());[print(v, p) for v, p in json.load(open('frames_src64.json')).items() if v in w and p != 'adlm/frames/1fps_448x252']" | \
     while read v p; do aws s3 sync --only-show-errors $B/$p/$v/ /scratch/frames/1fps_448x252/$v/; done
-  sed -i 's#/data/cmd_ad/frames/1fps_448x252/#/scratch/frames/1fps_448x252/#g' $n
+  # DD-variant builds (dd2b/dd4b/dd9b eval591): the 23 special clips point at /data/cmd_ad/frames/eval591_official (s3 adlm/frames/eval591_official)
+  python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for r in json.load(open('$n')) for p in r['images'] if '/eval591_official/' in p})))" | \
+    while read v; do [ -n "$v" ] && aws s3 sync --only-show-errors $B/adlm/frames/eval591_official/$v/ /scratch/frames/eval591_official/$v/; done
+  sed -i -e 's#/data/cmd_ad/frames/1fps_448x252/#/scratch/frames/1fps_448x252/#g' -e 's#/data/cmd_ad/frames/eval591_official/#/scratch/frames/eval591_official/#g' $n
   python3 -c "import json,os;d=json.load(open('$n'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('S3JSON',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
   touch $n.ok; JS=/scratch/xe/$n; }
 for J in "$@"; do IFS=, read TAG CK DATA TOK MODE PART <<< "$J"; PART=${PART:-0/1}; K=${PART%/*}; M=${PART#*/}
