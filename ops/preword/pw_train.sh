@@ -12,6 +12,8 @@
 #   scp creds -> ubuntu@<ip>:/tmp/cr.env ; scp ops/preword/pw_train.sh -> ubuntu@<ip>:~/
 #   ssh ubuntu@<ip> "nohup bash ~/pw_train.sh <commit> > ~/pw_train.log 2>&1 &"
 # Env: STOP_AT=<step> (default 440; STOP_AT= runs all 3 epochs).
+#      RESUME=<step>: fetch checkpoint-<step> (with optimizer/scheduler/rng state) from S3 into the output dir and resume
+#      from it (resume_from_checkpoint); that checkpoint is marked synced so it is not re-uploaded.
 WANT=$1; NG=4; GA=8
 [ -n "$WANT" ] || { echo "usage: pw_train.sh <commit>"; exit 1; }
 set -x
@@ -94,10 +96,14 @@ STOP=${STOP_AT-440}
 [ "$STOP" ] && ( while [ ! -f $W/synced_checkpoint-$STOP ]; do sleep 60; done
   echo "$(date +%T) STOP_AT_$STOP" >> $W/ckpt_sync.log; pkill -f "qwen38_bins_frames_full.yaml" ) &
 
+RES=""
+if [ -n "$RESUME" ]; then mkdir -p $OUT; aws s3 sync --only-show-errors $M/checkpoint-$RESUME/ $OUT/checkpoint-$RESUME/
+  complete $OUT/checkpoint-$RESUME || { echo RESUME_CKPT_INCOMPLETE; exit 1; }; touch $W/synced_checkpoint-$RESUME
+  RES="resume_from_checkpoint=$OUT/checkpoint-$RESUME"; echo "RESUME_FROM checkpoint-$RESUME"; fi
 cd $LF && echo "TRAIN_START $(date +%T)"
 llamafactory-cli train examples/budget_ad/qwen38_bins_frames_full.yaml \
   dataset_dir=$D dataset=${N}_f150_40k tokenized_path=$W/tokcache/$N output_dir=$OUT run_name=qwen38-dd_budget_preword \
-  gradient_accumulation_steps=$GA preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) \
+  gradient_accumulation_steps=$GA $RES preprocessing_num_workers=$(( $(nproc) > 48 ? 48 : $(nproc) )) \
   > $W/runs/train_preword.log 2>&1
 echo "TRAIN_EXIT $? $(date +%T)"
 . $W/creds.env; aws s3 cp --only-show-errors $W/runs/train_preword.log $M/train.log
