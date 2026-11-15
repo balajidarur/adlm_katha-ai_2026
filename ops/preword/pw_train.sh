@@ -19,7 +19,9 @@ WANT=$1; NG=4; GA=8
 set -x
 export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 sudo touch /etc/gpu-idle-shutdown.disable
-if [ -d /opt/dlami/nvme ]; then W=/opt/dlami/nvme; sudo chown ubuntu:ubuntu $W
+# persistent EBS volume (/persist, survives stop) first; instance store only as fallback
+if mountpoint -q /persist; then W=/persist
+elif [ -d /opt/dlami/nvme ]; then W=/opt/dlami/nvme; sudo chown ubuntu:ubuntu $W
 else W=/scratch
   if ! mountpoint -q $W; then
     DEV=$(lsblk -dn -o NAME,MODEL | awk '/Instance Storage/{print $1}' | while read d; do lsblk -n -o MOUNTPOINT /dev/$d | grep -q . || echo $d; done | head -1)
@@ -52,11 +54,12 @@ grep -E "${N}_(f150_40k|eval527)|dataset_info" SHA256SUMS | sha256sum -c - || { 
 cd $HOME
 
 # frames: S3 copy of the 1 FPS pool (box A's /data is not here); symlinked to the path the JSONs use
-if [ ! -d /data/cmd_ad/frames/1fps_448x252 ]; then
+# always (re)sync: aws s3 sync only fetches what is missing, so a crashed or partial earlier download is completed
+if [ ! -d /data/cmd_ad/frames/1fps_448x252 ] || [ -L /data/cmd_ad/frames/1fps_448x252 ]; then
   aws s3 ls $B/frames/_DONE >/dev/null || { echo NO_FRAMES_DONE_MARKER; exit 1; }
   python3 -c "import json;print('\n'.join(sorted({p.split('/')[-2] for f in ('$D/${N}_f150_40k.json','$D/${N}_eval527.json') for r in json.load(open(f)) for p in r['images']})))" > $W/pw_vids.txt
   mkdir -p $W/frames/1fps_448x252
-  cat $W/pw_vids.txt | xargs -P 48 -I{} sh -c ". $W/creds.env; aws s3 sync --only-show-errors $B/frames/1fps_448x252/{}/ $W/frames/1fps_448x252/{}/"
+  for try in 1 2 3; do cat $W/pw_vids.txt | xargs -P 32 -I{} sh -c ". $W/creds.env; aws s3 sync --only-show-errors $B/frames/1fps_448x252/{}/ $W/frames/1fps_448x252/{}/"; done
   sudo mkdir -p /data/cmd_ad/frames && sudo ln -sfn $W/frames/1fps_448x252 /data/cmd_ad/frames/1fps_448x252
 fi
 $HOME/adlm/venv/bin/python - <<EOF || { echo DATASET_CHECK_FAILED; exit 1; }
