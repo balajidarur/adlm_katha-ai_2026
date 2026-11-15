@@ -4,9 +4,11 @@
 #   bash xe_box.sh <commit> JOB [JOB ...]      JOB = tag,ckpt_s3_prefix,data,bins|nobins,tf|free:N[,k/m]  (k/m: this box takes part k of m, so m boxes share a job)
 #   data: cmd591 (CMD-AD eval591, e1_eval591/eval591.json) | rftest (REFRAMED test 91) | rch (REFRAMED challenge, 620 windows)
 #         | s3:<key under adlm/datasets> (any CMD-AD record json, frames from s3 adlm/frames/1fps_448x252, or per cmdad_eval591_9b/frames_src64.json)
+#         | rchsub:<key under adlm/datasets> (a subset of the rch records, same /scratch/rc_ds frame paths; frames fetched as for rch)
+# /scratch may be a symlink to a persistent volume (s4: /scratch -> /persist/scratch); then it is used as is (no mkfs).
 WANT=$1; shift; B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1 PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 exec >> $HOME/xe.log 2>&1; echo "START $(date -u) jobs: $*"; . $HOME/.cr.env; sudo touch /etc/gpu-idle-shutdown.disable
-if ! mountpoint -q /scratch; then
+if [ ! -L /scratch ] && ! mountpoint -q /scratch; then
   DEV=$(lsblk -dn -o NAME,MODEL | awk '/Instance Storage/{print $1}' | while read d; do lsblk -n -o MOUNTPOINT /dev/$d | grep -q . || echo $d; done | head -1)
   sudo mkfs.ext4 -q -F /dev/$DEV && sudo mkdir -p /scratch && sudo mount /dev/$DEV /scratch && sudo chown ubuntu:ubuntu /scratch
 fi
@@ -57,6 +59,8 @@ for J in "$@"; do IFS=, read TAG CK DATA TOK MODE PART <<< "$J"; PART=${PART:-0/
   case $DATA in cmd591) get_cmd591; JS=/scratch/xe/eval591_9b.json;;
     rftest) get_rftest; JS=/scratch/rf_datasets/frame_variants_448x252/reframed_$([ $TOK = bins ] && echo bins || echo nobudget)_f150_999k_test.json;;
     s3:*) get_s3json ${DATA#s3:};;
+    rchsub:*) get_rch; mkdir -p /scratch/xe; JS=/scratch/xe/$(basename ${DATA#rchsub:}); aws s3 cp --only-show-errors $B/adlm/datasets/${DATA#rchsub:} $JS
+      python3 -c "import json,os;d=json.load(open('$JS'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('RCHSUB',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; };;
     rch) get_rch; JS=/scratch/rc_ds/reframed_$([ $TOK = bins ] && echo bins || echo nobudget)_f150_999k_challenge.json;; esac
   . $HOME/.cr.env; CKD=/scratch/ckpt/$(echo $CK | md5sum | cut -c1-8)
   [ -f $CKD/adapter_model.safetensors ] || aws s3 cp --only-show-errors --recursive $CK/ $CKD/ --exclude "optimizer.pt" --exclude "rng_state*" --exclude "scheduler.pt"
