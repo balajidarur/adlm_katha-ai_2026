@@ -36,8 +36,10 @@ get_rftest(){ [ -f /scratch/rf_datasets/frame_variants_448x252/reframed_bins_f15
   aws s3 cp --only-show-errors $B/reframed/train_data/rf_frames_datasets.tar.gz - | pigz -dc | tar -x -C /scratch
   python3 -c "import json,os;d=json.load(open('/scratch/rf_datasets/frame_variants_448x252/reframed_bins_f150_999k_test.json'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('RFTEST',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }; }
 get_rch(){ [ -f /scratch/xe/rch.ok ] && return; mkdir -p /scratch/xe; C=$B/reframed/challenge_eval/r2/ds
-  aws s3 cp --only-show-errors $C/ds_json.tgz - | tar xz -C /
-  for b in g2 q1 q2; do aws s3 cp --only-show-errors $C/frames_$b.tgz - | pigz -dc | tar x -C / ; done
+  # members are scratch/rc_ds/...; extract under the real parent of /scratch (tar refuses to cross the s4 /scratch symlink: EXDEV)
+  local T=$(dirname $(readlink -f /scratch))
+  aws s3 cp --only-show-errors $C/ds_json.tgz - | tar xz -C $T
+  for b in g2 q1 q2; do aws s3 cp --only-show-errors $C/frames_$b.tgz - | pigz -dc | tar x -C $T ; done
   python3 -c "import json,os;d=json.load(open('/scratch/rc_ds/reframed_bins_f150_999k_challenge.json'));m=sum(not os.path.exists(p) for r in d for p in r['images']);print('RCH',len(d),'MISSING',m);assert m==0" || { echo FRAMES_MISSING; exit 1; }
   touch /scratch/xe/rch.ok; }
 get_s3json(){ # $1 = s3 key under adlm/datasets (CMD-AD records with /data/cmd_ad/frames/1fps_448x252 paths) -> /scratch/xe/<name>
