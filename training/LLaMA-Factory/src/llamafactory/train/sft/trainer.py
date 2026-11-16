@@ -303,6 +303,8 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         """
         tok = self.processing_class
         ad_prefix_re = re.compile(r"^(\d+:\d\d\.\d \[AD\] )")
+        force_first = os.environ.get("BUDGET_FORCE_FIRST") == "1"
+        force_first_re = re.compile(r"^\d+:\d\d\.\d \[AD\] (<\|budget_\d\|>)")
         nl = tok("\n", add_special_tokens=False)["input_ids"]
         eos = tok.eos_token_id
         max_ad = int(getattr(self.finetuning_args, "budget_max_ad_tokens", 160))
@@ -383,6 +385,11 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                 # space (as before 2026-10-28 11:30) put no-budget models off-distribution - they copied
                 # the previous AD or wrote digits - while budget models were unaffected.
                 pre = m.group(1).rstrip(" ")
+                # BUDGET_FORCE_FIRST=1: a label line "M:SS.s [AD] <|budget_k|>..." also forces its first budget token
+                # (fed as "]", " ", "<|budget_k|>", as in training); the AD words are still generated.
+                ff = force_first_re.match(line) if force_first else None
+                if ff:
+                    pre = f"{pre} {ff.group(1)}"
                 out = feed(tok(pre, add_special_tokens=False)["input_ids"])
                 gen = []
                 for _ in range(max_ad):

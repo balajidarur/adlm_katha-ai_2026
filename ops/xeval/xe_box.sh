@@ -6,6 +6,7 @@
 #         | s3:<key under adlm/datasets> (any CMD-AD record json, frames from s3 adlm/frames/1fps_448x252, or per cmdad_eval591_9b/frames_src64.json)
 #         | rchsub:<key under adlm/datasets> (a subset of the rch records, same /scratch/rc_ds frame paths; frames fetched as for rch)
 # /scratch may be a symlink to a persistent volume (s4: /scratch -> /persist/scratch); then it is used as is (no mkfs).
+# BUDGET_FORCE_FIRST=1 in the environment (inherited by xe_infer.sh) also forces each AD's first budget token (labels must carry it).
 WANT=$1; shift; B=s3://balu-transfer-933516006154-apne1; export AWS_DEFAULT_REGION=ap-northeast-1 PATH=$HOME/.local/bin:/usr/local/bin:$PATH
 exec >> $HOME/xe.log 2>&1; echo "START $(date -u) jobs: $*"; . $HOME/.cr.env; sudo touch /etc/gpu-idle-shutdown.disable
 if [ ! -L /scratch ] && ! mountpoint -q /scratch; then
@@ -14,7 +15,7 @@ if [ ! -L /scratch ] && ! mountpoint -q /scratch; then
 fi
 cd /scratch; [ "$(git -C adlm_repo rev-parse --short HEAD 2>/dev/null)" = "$WANT" ] || { aws s3 cp --only-show-errors $B/adlm/code/adlm_$WANT.bundle . && rm -rf adlm_repo && git clone -q -b qwen38-dense-dataset-training adlm_$WANT.bundle adlm_repo; }
 R=/scratch/adlm_repo; HAVE=$(git -C $R rev-parse --short HEAD); echo "COMMIT $HAVE (want $WANT)"; [ "$HAVE" = "$WANT" ] || { echo COMMIT_MISMATCH; exit 1; }
-MD5=$(md5sum $R/training/LLaMA-Factory/src/llamafactory/train/sft/trainer.py | cut -c1-10); echo "TRAINER_MD5 $MD5"; [ "$MD5" = 955de66d8a ] || { echo TRAINER_MISMATCH; exit 1; }
+MD5=$(md5sum $R/training/LLaMA-Factory/src/llamafactory/train/sft/trainer.py | cut -c1-10); echo "TRAINER_MD5 $MD5"; [ "$MD5" = 4294620fed ] || { echo TRAINER_MISMATCH; exit 1; }
 if [ ! -x $HOME/adlm/venv/bin/python ] || ! $HOME/adlm/venv/bin/python -c "import liger_kernel" 2>/dev/null || [ ! -d $HOME/adlm/hf_cache/hub/models--Qwen--Qwen3.5-4B ]; then
   mkdir -p pack; aws s3 cp --only-show-errors --recursive $B/adlm/tf_rerun/ pack/ --exclude "*" --include "uvpython.tgz" --include "venv.tgz" --include "qwen35_4b.tgz"
   for f in uvpython venv qwen35_4b; do pigz -dc pack/$f.tgz | sudo tar -x -C / ; done; rm -rf pack; sudo chown -R ubuntu:ubuntu $HOME/adlm
